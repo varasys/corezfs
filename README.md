@@ -90,13 +90,13 @@ sudo zfs create -o compression=lz4 zfs-pool/compressed
 sudo zfs create -o readonly=true zfs-pool/compressed/nested
 ```
 
-Note that the ZFS documentation recommends to always use lz4 compression (apparently the benefits of reading/writing less to disk override the cost of computing the compression), but that also compression is not used by default, and must be turned on with the `-o compression=lz4` option as shown above.
-
-The `-o` command line argument is used to set the options for each filesystem. There are many options, and a full list of all available options can be seen by running `sudo zfs get`. There is also a `sudo zfs set` command which can be used to set options. Refer to the manpage for all available options.
-
 The following command will show a list of ZFS filesystems.
 
 `sudo zfs list`
+
+Note that the ZFS documentation recommends to always use lz4 compression (apparently the benefits of reading/writing less to disk override the cost of computing the compression), but that also compression is not used by default, and must be turned on with the `-o compression=lz4` option as shown above.
+
+The `-o` command line argument is used to set the options for each filesystem. There are many options, and a full list of all available options can be seen by running `sudo zfs get`. There is also a `sudo zfs set` command which can be used to set options. Refer to the manpage for all available options.
 
 ### Mounting ZFS Filesystems on the OS Filesystem
 By default when a new pool is created a mountpoint (ie. directory) for the pool is created in the os root filesystem, and the zfs filesystems are automatically mounted at that mountpoint.
@@ -114,7 +114,7 @@ A snapshot is a read-only exact copy of a filesystem from a specific point in ti
 
 A clone is an exact copy of a snapshot, but unlike a snapshot is both read/write.
 
-A simplistic way to think about it is that a snapshot is a backup, and if you want to restore a backup you "clone" it.
+A simplistic way to think about it is that a snapshot is a backup, and if you want to restore a backup you "clone" it back into existance.
 
 ### NFS and CIFS
 ZFS has built-in support for serving filesystems over nfs and cifs (by setting different options for the filesystem). Refer to the zfs man page for details.
