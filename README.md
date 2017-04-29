@@ -43,7 +43,6 @@ To install the latest released version:
 mkdir corezfs
 curl -L https://api.github.com/repos/varasys/corezfs/tarball | tar -zxv -C corezfs --strip-components=1
 sudo ./corezfs/install-zfs.sh
-sudo rm -rf corezfs
 ```
 
 To install a specific version (in this case v0.1.0):
@@ -52,10 +51,9 @@ To install a specific version (in this case v0.1.0):
 mkdir corezfs
 curl -L https://github.com/varasys/corezfs/archive/v0.1.0.tar.gz | tar -zxv -C corezfs --strip-components=1
 sudo ./corezfs/install-zfs.sh
-sudo rm -rf corezfs
 ```
 
-During installation, the corezfs folder will grow to around 3GB, so it must be run from a location with this much free space.
+The installation requires about 350 MB of downloaded files, and during installation, the corezfs folder will grow to around 3GB, so it must be run from a location with this much free space.
 
 If the installation is successful, the script will clean-up after itself by deleting the "corezfs" directory, but the original contents of the corezfs folder (including this readme) will be copied to the /usr/local/share/corezfs folder for future reference.
 
