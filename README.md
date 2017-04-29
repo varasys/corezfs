@@ -87,9 +87,9 @@ There is no uninstaller. CoreOS instances are generally sacrificial and get thro
          [Service]
          ...
          #ExecStart=/usr/local/sbin/zpool import -c /usr/local/etc/zfs/zpool.cache -aN
-         ExecStart=/usr/local/sbin/zpool import -c /usr/local/etc/zfs/pool-01.cache -aN
-         ExecStart=/usr/local/sbin/zpool import -c /usr/local/etc/zfs/pool-02.cache -aN
-         ExecStart=/usr/local/sbin/zpool import -c /usr/local/etc/zfs/pool-03.cache -aN
+         ExecStart=/usr/local/sbin/zpool import -c /usr/local/etc/zfs/pool-01.cache -aN; \
+                   /usr/local/sbin/zpool import -c /usr/local/etc/zfs/pool-02.cache -aN; \
+                   /usr/local/sbin/zpool import -c /usr/local/etc/zfs/pool-03.cache -aN
          ```
 
 ## Using ZFS
