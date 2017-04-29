@@ -92,9 +92,14 @@ RequiredBy=zfs-import-cache.service
 RequiredBy=zfs-import-scan.service
 EOF
 
-systemctl daemon-reload || error_exit "$LINENO: Error reloading systemd units"
-systemctl enable --now lib-modules.mount || error_exit "$LINENO: Error mounting /lib/modules overlay" 
-systemctl enable --now usr-local.mount || error_exit "$LINENO: Error mounting /usr/local overlay"
+cat > /etc/systemd/system-preset/40-overlays.preset <<EOF
+enable usr-local.mount
+enable lib-modules.mount
+EOF
+
+systemctl preset-all || error_exit "$LINENO: Error presetting systemd overlay units"
+systemctl start lib-modules.mount || error_exit "$LINENO: Error mounting /lib/modules overlay" 
+systemctl start usr-local.mount || error_exit "$LINENO: Error mounting /usr/local overlay"
 
 if [ ! -f coreos_developer_container.bin ]; then
     . /usr/share/coreos/release
@@ -119,10 +124,15 @@ sudo systemd-nspawn \
     || error_exit "$LINENO: Error running development container"
 
 rm -rf /opt/usr/local/sbin/build-zfs.sh
+
 ldconfig || error_exit "$LINENO: Error reloading shared libraries"
 depmod || error_exit "$LINENO: Error refreshing module dependencies"
-rsync -av /usr/local/etc/* /etc/
-systemctl daemon-reload || error_exit "$LINENO: Error running systemctl daemon-reload"
-systemctl enable --now zfs.target || error_exit "$LINENO: Error starting zfs.target systemd unit"
+
+ln -s /usr/local/etc/systemd/system/* /etc/systemd/system/
+ln -s /usr/local/etc/systemd/system-preset/* /etc/systemd/system-preset/
+ls -s /usr/local/etc/zfs /etc/zfs
+
+systemctl preset-all || error_exit "$LINENO: Error presetting systemd zfs units"
+systemctl start zfs.target || error_exit "$LINENO: Error starting zfs.target systemd unit"
 cd ../
 rm -rf corezfs
