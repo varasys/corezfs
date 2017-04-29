@@ -8,6 +8,8 @@ function error_exit
 
 [ "$EUID" -eq 0 ] || error_exit "Script must be run as root"
 
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
 mkdir -p /opt/{modules,modules.wd,usr/{local/sbin,local.wd}} \
 || error_exit "$LINENO: Error creating overlay directories"
 
@@ -101,14 +103,14 @@ systemctl preset-all || error_exit "$LINENO: Error presetting systemd overlay un
 systemctl start lib-modules.mount || error_exit "$LINENO: Error mounting /lib/modules overlay" 
 systemctl start usr-local.mount || error_exit "$LINENO: Error mounting /usr/local overlay"
 
-if [ ! -f coreos_developer_container.bin ]; then
+if [ ! -f "$DIR/coreos_developer_container.bin" ]; then
     . /usr/share/coreos/release
     . /usr/share/coreos/update.conf
     . /etc/coreos/update.conf  # This might not exist.
     url="http://${GROUP:-stable}.release.core-os.net/$COREOS_RELEASE_BOARD/$COREOS_RELEASE_VERSION/coreos_developer_container.bin.bz2"
     gpg2 --recv-keys 48F9B96A2E16137F && \
     curl -L "$url" |
-        tee >(bzip2 -d > coreos_developer_container.bin) |
+        tee >(bzip2 -d > "$DIR/coreos_developer_container.bin") |
         gpg2 --verify <(curl -Ls "$url.sig") - \
     || error_exit "$LINENO: Error downloading coreos_developer_container from $url"
 fi
@@ -119,20 +121,20 @@ sudo systemd-nspawn \
     --chdir=/usr/src \
     --bind=/lib/modules \
     --bind=/usr/local \
-    --image=coreos_developer_container.bin \
+    --image="$DIR/coreos_developer_container.bin" \
     build-zfs.sh \
     || error_exit "$LINENO: Error running development container"
 
 rm -rf /opt/usr/local/sbin/build-zfs.sh
 
-ldconfig || error_exit "$LINENO: Error reloading shared libraries"
-depmod || error_exit "$LINENO: Error refreshing module dependencies"
-
 ln -s /usr/local/etc/systemd/system/* /etc/systemd/system/
 ln -s /usr/local/etc/systemd/system-preset/* /etc/systemd/system-preset/
-ls -s /usr/local/etc/zfs /etc/zfs
+ln -s /usr/local/etc/zfs /etc/zfs
+
+ldconfig || error_exit "$LINENO: Error reloading shared libraries"
+depmod || error_exit "$LINENO: Error refreshing module dependencies"
+modprobe zfs || error_exit "$LINENO: Error loading zfs kernel module"
 
 systemctl preset-all || error_exit "$LINENO: Error presetting systemd zfs units"
 systemctl start zfs.target || error_exit "$LINENO: Error starting zfs.target systemd unit"
-cd ../
-rm -rf corezfs
+rm -rf "$DIR"
