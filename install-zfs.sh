@@ -100,7 +100,8 @@ Before=zfs-import-scan.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/sbin/modprobe zfs
+ExecStartPre=/usr/sbin/depmod
+ExecStart=/usr/sbin/modprobe zfs
 
 [Install]
 WantedBy=zfs.target
