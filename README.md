@@ -39,11 +39,12 @@ To install ZFS clone this repository and run the install-zfs.sh script as root (
 
 ```bash
 git clone https://github.com/varasys/corezfs.git
-cd corezfs
-sudo ./install-zfs.sh
+sudo ./corezfs/install-zfs.sh
 ```
 
-The `sudo ./install` command must be run from within the "corezfs" directory created by the `git clone` command. If the installation is successful, the script will clean-up after itself by deleting the "corezfs" directory.
+During installation, the corezfs folder will grow to around 3GB, so it must be run from a location with this much free space.
+
+If the installation is successful, the script will clean-up after itself by deleting the "corezfs" directory, but the original contents of the corezfs folder (including this readme) will be copied to the /usr/local/share/doc/corezfs folder for future reference.
 
 ## Uninstallation
 There is no uninstaller. CoreOS instances are generally sacrifical and get thrown away and re-built as needed.
