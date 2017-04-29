@@ -51,9 +51,8 @@ cd zfs
 ./autogen.sh || error_exit "$LINENO: Error running autogen.sh for zfs"
 ./configure \
     --disable-sysvinit \
-    --with-systemdunitdir=/usr/local/etc/systemd/system \
-    --with-systemdpresetdir=/usr/local/etc/systemd/system-preset \
-    --prefix /usr/local \
+    --with-systemdunitdir=/usr/local/systemd/system \
+    --with-systemdpresetdir=/usr/local/systemd/system-preset \
 || error_exit "$LINENO: Error configuring zfs"
 make -j$(nproc) || error_exit "$LINENO: Error making zfs"
 make install || error_exit "$LINENO: Error installing zfs"
@@ -127,16 +126,12 @@ sudo systemd-nspawn \
 
 rm -rf /opt/usr/local/sbin/build-zfs.sh
 
-rsync -av /usr/local/etc/* /etc/ \
-&& rm -rf /usr/local/etc \
-&& ln -s /etc /usr/local/etc \
-&& touch /etc/zfs/zpool.cache \
-|| error_exit "$LINENO: Error linking zfs configuration"
-
 ldconfig || error_exit "$LINENO: Error reloading shared libraries"
 depmod || error_exit "$LINENO: Error refreshing module dependencies"
 modprobe zfs || error_exit "$LINENO: Error loading zfs kernel module"
 
+touch /usr/local/etc/zfs/zpool.cache
+rsync -av /usr/local/systemd/* /etc/systemd/
 systemctl preset-all || error_exit "$LINENO: Error presetting systemd zfs units"
 systemctl start zfs.target || error_exit "$LINENO: Error starting zfs.target systemd unit"
 rm -rf "$DIR"
