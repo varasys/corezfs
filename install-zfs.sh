@@ -10,7 +10,7 @@ function error_exit
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-mkdir -p /opt/{modules,modules.wd,usr/{local/sbin,local.wd}} \
+mkdir -p /opt/{modules,modules.wd,usr/{local/{sbin,etc/systemd/{system,system-preset}},local.wd}} \
 || error_exit "$LINENO: Error creating overlay directories"
 
 cat > /opt/usr/local/sbin/build-zfs.sh <<\EOF
@@ -65,7 +65,7 @@ make install || error_exit "$LINENO: Error installing zfs"
 EOF
 chmod +x /opt/usr/local/sbin/build-zfs.sh
 
-cat > /etc/systemd/system/lib-modules.mount <<EOF
+cat > /opt/usr/local/etc/systemd/system/lib-modules.mount <<EOF
 [Unit]
 Description=ZFS Kernel Modules
 ConditionPathExists=/opt/modules
@@ -81,7 +81,7 @@ Options=lowerdir=/lib/modules,upperdir=/opt/modules,workdir=/opt/modules.wd
 WantedBy=zfs.service
 EOF
 
-cat > /etc/systemd/system/usr-local.mount <<EOF
+cat > /opt/usr/local/etc/systemd/system/usr-local.mount <<EOF
 [Unit]
 Description=ZFS User Tools
 ConditionPathExists=/opt/usr/local
@@ -97,7 +97,7 @@ Options=lowerdir=/usr/local,upperdir=/opt/usr/local,workdir=/opt/usr/local.wd
 WantedBy=zfs.target
 EOF
 
-cat > /etc/systemd/system/zfs.service <<EOF
+cat > /opt/usr/local/etc/systemd/system/zfs.service <<EOF
 [Unit]
 Description=ZFS Kernel Modules
 Before=zfs-import-cache.service
@@ -106,13 +106,19 @@ Before=zfs-import-scan.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStartPre=/usr/sbin/depmod
 ExecStart=/usr/sbin/modprobe zfs
 
 [Install]
 WantedBy=zfs.target
 EOF
 
+cat > /opt/usr/local/etc/systemd/system-preset/40-overlays.preset <<EOF
+enable usr-local.mount
+enable lib-modules.mount
+enable zfs.service
+EOF
+
+cp /opt/usr/local/etc/systemd/system/{lib-modules.mount,usr-local.mount} /etc/systemd/system/
 systemctl daemon-reload
 systemctl start usr-local.mount
 systemctl start lib-modules.mount
@@ -139,18 +145,14 @@ sudo systemd-nspawn \
     build-zfs.sh \
     || error_exit "$LINENO: Error running development container"
 
-rm -rf /opt/usr/local/sbin/build-zfs.sh
+rm -rf /usr/local/sbin/build-zfs.sh
 
 ldconfig || error_exit "$LINENO: Error reloading shared libraries"
+depmod || error_exit "$LINENO: Error running depmod"
 
 rsync -av /usr/local/systemd/* /etc/systemd/
 
-cat > /etc/systemd/system-preset/40-overlays.preset <<EOF
-enable usr-local.mount
-enable lib-modules.mount
-enable zfs.service
-EOF
+ls /usr/local/systemd/system/* | xargs systemctl preset || error_exit "$LINENO: Error presetting systemd zfs units"
 
-systemctl preset-all || error_exit "$LINENO: Error presetting systemd zfs units"
 systemctl start zfs.target || error_exit "$LINENO: Error starting zfs.target systemd unit"
 rm -rf "$DIR"

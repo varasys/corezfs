@@ -57,6 +57,27 @@ The installation requires about 350 MB of downloaded files, and during installat
 
 If the installation is successful, the script will clean-up after itself by deleting the "corezfs" directory, but the original contents of the corezfs folder (including this readme) will be copied to the /usr/local/share/corezfs folder for future reference.
 
+## Copying to Another Instance
+After installing ZFS on one instance, it can be copied to another instance, without recompiling it, and assuming the same version of CoreOS.
+
+All of the necissary files are stored in the /opt directory, so create a tarball of that, excluding the two working directories used for the overlays.
+
+```bash
+tar -zcvf corezfs.tar.gz -C / --exclude=/opt/modules.wd/* --exclude=/opt/usr/local.wd/* /opt
+```
+
+Next on the target computer extract the tarball into the root directory and set everything up as shown below.
+
+```bash
+sudo tar -zxvf corezfs.tar.gz -C /
+sudo rsync -av /opt/usr/local/systemd /etc/systemd
+ls /opt/usr/local/systemd/system | xargs sudo systemctl preset
+sudo systemctl start lib-modules.mount usr-local.mount
+sudo ldconfig
+sudo depmod
+sudo systemctl start zfs.target
+```
+
 ## Uninstallation
 There is no uninstaller. CoreOS instances are generally sacrificial and get thrown away and re-built as needed.
 
