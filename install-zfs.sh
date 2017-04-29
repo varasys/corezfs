@@ -107,6 +107,7 @@ ExecStart=/usr/sbin/modprobe zfs
 WantedBy=zfs.target
 EOF
 
+systemctl daemon-reload
 systemctl start usr-local.mount
 systemctl start lib-modules.mount
 
