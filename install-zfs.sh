@@ -24,6 +24,8 @@ function error_exit
 
 [ "$EUID" -eq 0 ] || error_exit "Script must be run as root"
 
+cp -r "$DIR" /usr/local/share/
+
 emerge-gitclone \
 && (. /usr/share/coreos/release; \
 git -C /var/lib/portage/coreos-overlay checkout build-${COREOS_RELEASE_VERSION%%.*}) \
@@ -72,8 +74,7 @@ Where=/lib/modules
 Options=lowerdir=/lib/modules,upperdir=/opt/modules,workdir=/opt/modules.wd
 
 [Install]
-RequiredBy=zfs-import-cache.service
-RequiredBy=zfs-import-scan.service
+RequiredBy=zfs.service
 EOF
 
 cat > /etc/systemd/system/usr-local.mount <<EOF
@@ -90,8 +91,7 @@ Where=/usr/local
 Options=lowerdir=/usr/local,upperdir=/opt/usr/local,workdir=/opt/usr/local.wd
 
 [Install]
-RequiredBy=zfs-import-cache.service
-RequiredBy=zfs-import-scan.service
+RequiredBy=zfs.service
 EOF
 
 cat > /etc/systemd/system-preset/40-overlays.preset <<EOF
@@ -127,9 +127,11 @@ sudo systemd-nspawn \
 
 rm -rf /opt/usr/local/sbin/build-zfs.sh
 
-ln -s /usr/local/etc/systemd/system/* /etc/systemd/system/
-ln -s /usr/local/etc/systemd/system-preset/* /etc/systemd/system-preset/
-ln -s /usr/local/etc/zfs /etc/zfs
+rsync -av /usr/local/etc/* /etc/ \
+&& rm -rf /usr/local/etc \
+&& ln -s /etc /usr/local/etc \
+&& touch /etc/zfs/zpool.cache \
+|| error_exit "$LINENO: Error linking zfs configuration"
 
 ldconfig || error_exit "$LINENO: Error reloading shared libraries"
 depmod || error_exit "$LINENO: Error refreshing module dependencies"
