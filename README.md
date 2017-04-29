@@ -37,9 +37,22 @@ This script is adapted from the instructions from:
 ## Installation
 To install ZFS clone this repository and run the install-zfs.sh script as root (it is envisioned this would normally be run as part of an automatic provisioning process).
 
+To install the latest released version:
+
 ```bash
-git clone https://github.com/varasys/corezfs.git
+mkdir corezfs
+curl -L https://api.github.com/repos/varasys/corezfs/tarball | tar -zxv -C corezfs --strip-components=1
 sudo ./corezfs/install-zfs.sh
+sudo rm -rf corezfs
+```
+
+To install a specific version (in this case v0.1.0):
+
+```bash
+mkdir corezfs
+curl -L https://github.com/varasys/corezfs/archive/v0.1.0.tar.gz | tar -zxv -C corezfs --strip-components=1
+sudo ./corezfs/install-zfs.sh
+sudo rm -rf corezfs
 ```
 
 During installation, the corezfs folder will grow to around 3GB, so it must be run from a location with this much free space.
