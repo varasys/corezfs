@@ -63,6 +63,7 @@ cat > /etc/systemd/system/lib-modules.mount <<EOF
 [Unit]
 Description=ZFS Kernel Modules
 ConditionPathExists=/opt/modules
+Before=zfs.service
 
 [Mount]
 Type=overlay
@@ -71,24 +72,14 @@ Where=/lib/modules
 Options=lowerdir=/lib/modules,upperdir=/opt/modules,workdir=/opt/modules.wd
 
 [Install]
-WantedBy=multi-user.target
-EOF
-
-cat > /etc/systemd/system/lib-modules.automount <<EOF
-[Unit]
-Description=ZFS Kernel Modules Automount
-
-[Automount]
-Where=/lib/modules
-
-[Install]
-WantedBy=multi-user.target
+WantedBy=zfs.service
 EOF
 
 cat > /etc/systemd/system/usr-local.mount <<EOF
 [Unit]
 Description=ZFS User Tools
 ConditionPathExists=/opt/usr/local
+Before=zfs.service
 
 [Mount]
 Type=overlay
@@ -97,28 +88,32 @@ Where=/usr/local
 Options=lowerdir=/usr/local,upperdir=/opt/usr/local,workdir=/opt/usr/local.wd
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=zfs.target
 EOF
 
-cat > /etc/systemd/system/usr-local.automount <<EOF
+cat > /etc/systemd/system/zfs.service <<EOF
 [Unit]
-Description=ZFS User Tools Automount
+Description=ZFS Kernel Modules
+Before=zfs-import-cache.service
+Before=zfs-import-scan.service
 
-[Automount]
-Where=/usr/local
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Exec=/sbin/modprobe zfs
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=zfs.target
 EOF
 
 cat > /etc/systemd/system-preset/40-overlays.preset <<EOF
 enable usr-local.mount
 enable lib-modules.mount
-enable usr-local.automount
-enable lib-modules.automount
+enable zfs.service
 EOF
 
 systemctl preset-all || error_exit "$LINENO: Error presetting systemd overlay units"
+systemctl start zfs.service || error_exit "$LINENO: Error loading ZFS kernel drivers"
 
 if [ ! -f "$DIR/coreos_developer_container.bin" ]; then
     . /usr/share/coreos/release
