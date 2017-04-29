@@ -5,7 +5,7 @@ This is a script to compile and install ZFS on CoreOS. It is meant to be install
 
 This script was written on CoreOS stable (1353.7.0), but in theory, will work on any version / channel (ie. stable, beta, alpha).
 
-[CoreOS](https://coreos.com/os/docs/latest) is a minimal linux distribution designed for running containers but does not currently come with support for ZFS.
+[CoreOS](https://coreos.com/os/docs/latest) is a linux distribution designed specifically for running containers but does not currently come with support for ZFS.
 
 [ZFS](http://zfsonlinux.org) is a very performant filesystem that supports error checking, snapshots, clones, native nfs and cifs support, and incremental backups.
 
@@ -35,14 +35,15 @@ This script is adapted from the instructions from:
 2. https://github.com/zfsonlinux/zfs/wiki/Building-ZFS
 
 ## Installation
-To install ZFS clone this repository, run the install-zfs.sh script as root, then delete the folder.
+To install ZFS clone this repository and run the install-zfs.sh script as root (it is envisioned this would normally be run as part of an automatic provisioning process).
+
 ```bash
 git clone https://github.com/varasys/corezfs.git
 cd corezfs
 sudo ./install-zfs.sh
-cd ../
-sudo rm -rf corezfs # delete this folder since it is unneeded and 3GB+ after compiling ZFS
 ```
+
+The `sudo ./install` command must be run from within the "corezfs" directory created by the `git clone` command. If the installation is successful, the script will clean-up after itself by deleting the "corezfs" directory.
 
 ## Uninstallation
 There is no uninstaller. CoreOS instances are generally sacrifical and get thrown away and re-built as needed.
