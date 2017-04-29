@@ -73,7 +73,7 @@ Where=/lib/modules
 Options=lowerdir=/lib/modules,upperdir=/opt/modules,workdir=/opt/modules.wd
 
 [Install]
-RequiredBy=zfs.service
+RequiredBy=zfs.target
 EOF
 
 cat > /etc/systemd/system/usr-local.mount <<EOF
@@ -90,7 +90,7 @@ Where=/usr/local
 Options=lowerdir=/usr/local,upperdir=/opt/usr/local,workdir=/opt/usr/local.wd
 
 [Install]
-RequiredBy=zfs.service
+RequiredBy=zfs.target
 EOF
 
 cat > /etc/systemd/system-preset/40-overlays.preset <<EOF
