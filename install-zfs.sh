@@ -107,14 +107,8 @@ ExecStart=/usr/sbin/modprobe zfs
 WantedBy=zfs.target
 EOF
 
-cat > /etc/systemd/system-preset/40-overlays.preset <<EOF
-enable usr-local.mount
-enable lib-modules.mount
-enable zfs.service
-EOF
-
-systemctl preset-all || error_exit "$LINENO: Error presetting systemd overlay units"
-systemctl start zfs.service || error_exit "$LINENO: Error loading ZFS kernel drivers"
+systemctl start usr-local.mount
+systemctl start lib-modules.mount
 
 if [ ! -f "$DIR/coreos_developer_container.bin" ]; then
     . /usr/share/coreos/release
@@ -141,11 +135,15 @@ sudo systemd-nspawn \
 rm -rf /opt/usr/local/sbin/build-zfs.sh
 
 ldconfig || error_exit "$LINENO: Error reloading shared libraries"
-depmod || error_exit "$LINENO: Error refreshing module dependencies"
-modprobe zfs || error_exit "$LINENO: Error loading zfs kernel module"
 
-touch /usr/local/etc/zfs/zpool.cache
 rsync -av /usr/local/systemd/* /etc/systemd/
+
+cat > /etc/systemd/system-preset/40-overlays.preset <<EOF
+enable usr-local.mount
+enable lib-modules.mount
+enable zfs.service
+EOF
+
 systemctl preset-all || error_exit "$LINENO: Error presetting systemd zfs units"
 systemctl start zfs.target || error_exit "$LINENO: Error starting zfs.target systemd unit"
 rm -rf "$DIR"
