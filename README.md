@@ -3,13 +3,13 @@
 ## ZFS on CoreOS
 This is a script to compile and install ZFS on CoreOS. It is meant to be installed on a fresh clean CoreOS instance. Although it can be run manually, it is envisioned that it is typically used as part of an automated provisioning process.
 
-This script was written on CoreOS stable (1353.7.0), but in theory, will work on any version / channel (ie. stable, beta, alpha).
-
 [CoreOS](https://coreos.com/os/docs/latest) is a linux distribution designed specifically for running containers but does not currently come with support for ZFS.
 
 [ZFS](http://zfsonlinux.org) is a very performant filesystem that supports error checking, snapshots, clones, native nfs and cifs support, and incremental backups.
 
 The motivation for this script is to be able to mount a ZFS filesystem to use as persistent storage on a Kubernetes controller node running CoreOS.
+
+This script was written on CoreOS stable (1353.7.0), but in theory, will work on any version / channel (ie. stable, beta, alpha). It installs the latest release of ZFS on Linux which is based on OpenZFS and consists of a repository [zfs](https://github.com/zfsonlinux/zfs) which includes the upstream OpenZFS implementation and a repository [spl](https://github.com/zfsonlinux/spl) which is a shim to run OpenZFS on Linux.
 
 This script compiles ZFS from source and creates some overlays to put the kernel modules and user space tools. Note that the script does not effect the filesystem that CoreOS is mounted on, it allows additional block devices to be mounted using the ZFS file system.
 

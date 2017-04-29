@@ -39,14 +39,20 @@ emerge -gKv coreos-sources \
 emerge sys-devel/automake sys-devel/autoconf sys-devel/libtool \
 || error_exit "$LINENO: Error installing development tools"
 
-git clone https://github.com/zfsonlinux/spl.git || error_exit "$LINENO: Error cloning spl repository"
+mkdir spl \
+&& curl -L https://api.github.com/repos/zfsonlinux/spl/tarball \
+| tar -zxv -C spl --strip-components=1 \
+|| error_exit "$LINENO: Error cloning spl repository"
 cd spl
 ./autogen.sh || error_exit "$LINENO: Error running autogen.sh for spl"
 ./configure --prefix /usr/local || error_exit "$LINENO: Error configuring spl"
 make -j$(nproc) || error_exit "$LINENO: Error making spl"
 make install || error_exit "$LINENO: Error installing spl"
 cd ../
-git clone https://github.com/zfsonlinux/zfs.git || error_exit "$LINENO: Error cloning zfs repository"
+mkdir zfs \
+&& curl -L https://api.github.com/repos/zfsonlinux/zfs/tarball \
+| tar -zxv -C zfs --strip-components=1 \
+|| error_exit "$LINENO: Error cloning zfs repository"
 cd zfs
 ./autogen.sh || error_exit "$LINENO: Error running autogen.sh for zfs"
 ./configure \
