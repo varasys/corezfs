@@ -70,8 +70,8 @@ Where=/lib/modules
 Options=lowerdir=/lib/modules,upperdir=/opt/modules,workdir=/opt/modules.wd
 
 [Install]
-WantedBy=zfs-import-cache.service
-WantedBy=zfs-import-scan.service
+RequiredBy=zfs-import-cache.service
+RequiredBy=zfs-import-scan.service
 EOF
 
 cat > /etc/systemd/system/usr-local.mount <<EOF
@@ -88,8 +88,8 @@ Where=/usr/local
 Options=lowerdir=/usr/local,upperdir=/opt/usr/local,workdir=/opt/usr/local.wd
 
 [Install]
-WantedBy=zfs-import-cache.service
-WantedBy=zfs-import-scan.service
+RequiredBy=zfs-import-cache.service
+RequiredBy=zfs-import-scan.service
 EOF
 
 systemctl daemon-reload || error_exit "$LINENO: Error reloading systemd units"
@@ -124,3 +124,5 @@ depmod || error_exit "$LINENO: Error refreshing module dependencies"
 modprobe zfs || error_exit "$LINENO: Error loading zfs modules"
 rsync -av /usr/local/etc/* /etc/
 systemctl daemon-reload || error_exit "$LINENO: Error running systemctl daemon-reload"
+cd ../
+rm -rf corezfs
