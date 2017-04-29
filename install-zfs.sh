@@ -121,8 +121,8 @@ sudo systemd-nspawn \
 rm -rf /opt/usr/local/sbin/build-zfs.sh
 ldconfig || error_exit "$LINENO: Error reloading shared libraries"
 depmod || error_exit "$LINENO: Error refreshing module dependencies"
-modprobe zfs || error_exit "$LINENO: Error loading zfs modules"
 rsync -av /usr/local/etc/* /etc/
 systemctl daemon-reload || error_exit "$LINENO: Error running systemctl daemon-reload"
+systemctl enable --now zfs.target || error_exit "$LINENO: Error starting zfs.target systemd unit"
 cd ../
 rm -rf corezfs
