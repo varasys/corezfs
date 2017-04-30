@@ -3,6 +3,15 @@
 ## ZFS on CoreOS
 This is a script to compile and install ZFS on CoreOS. It is meant to be installed on a fresh clean CoreOS instance. Although it can be run manually, it is envisioned that it is typically used as part of an automated provisioning process.
 
+## For the Impatient
+Copy the script to the target machine (which should be a fresh CoreOS install), compile the code, and then install it.
+
+```bash
+mkdir corezfs
+curl -L https://api.github.com/repos/varasys/corezfs/tarball | tar -zxv -C corezfs --strip-components=1
+sudo ./corezfs/install-zfs.sh
+```
+
 [CoreOS](https://coreos.com/os/docs/latest) is a linux distribution designed specifically for running containers but does not currently come with support for ZFS.
 
 [ZFS](http://zfsonlinux.org) is a very performant filesystem that supports error checking, snapshots, clones, native nfs and cifs support, and incremental backups.
