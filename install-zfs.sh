@@ -232,6 +232,6 @@ case $1 in
         ./corezfs/install-zfs.sh build ./my-archive-name
         ./corezfs/install-zfs.sh install ./my-archive_name
         ```
-        ;;
         EOF
+        ;;
 esac
