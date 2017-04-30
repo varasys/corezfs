@@ -223,14 +223,14 @@ case $1 in
         ## Typical Build and Install Workflow
         When using the default archive_file names:      
         ```bash
-        ./corezfs/install-zfs.sh build
-        ./corezfs/install-zfs.sh install
+        sudo ./corezfs build
+        sudo ./corezfs install
         ```
         
         When using custom archive_file names:
         ```bash
-        ./corezfs/install-zfs.sh build ./my-archive-name
-        ./corezfs/install-zfs.sh install ./my-archive_name
+        sudo ./corezfs build ./my-archive-name
+        sudo ./corezfs install ./my-archive_name
         ```
         EOF
         ;;
