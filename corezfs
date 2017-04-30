@@ -11,9 +11,9 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 . /usr/share/coreos/release
 . /usr/share/coreos/update.conf
-[ -e /etc/coreos/update.conf ] && . /etc/coreos/update.conf
+. /etc/coreos/update.conf
 
-ARCHIVE="${DIR}/${2:-corezfs_$COREOS_RELEASE_BOARD_$COREOS_RELEASE_VERSION_${GROUP:-stable}}.tar.gz"
+ARCHIVE="${2:-${DIR}/corezfs_${COREOS_RELEASE_BOARD}_${COREOS_RELEASE_VERSION}_${GROUP:-stable}}.tar.gz"
 
 function prepare_build_script {
 	echo "Preparing build script"
