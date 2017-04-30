@@ -10,8 +10,8 @@ To build ZFS and use directly on a single machine:
 ```bash
 mkdir corezfs
 curl -L https://api.github.com/repos/varasys/corezfs/tarball | tar -zxv -C corezfs --strip-components=1
-sudo ./corezfs build --no-archive
-sudo ./corezfs install
+sudo ./corezfs/corezfs build --no-archive
+sudo ./corezfs/corezfs install
 sudo rm -rf corezfs #optional clean-up
 ```
 
@@ -20,7 +20,7 @@ To build ZFS and create an archive file that can be used on other machines:
 #on the build machine
 mkdir corezfs
 curl -L https://api.github.com/repos/varasys/corezfs/tarball | tar -zxv -C corezfs --strip-components=1
-sudo ./corezfs build
+sudo ./corezfs/corezfs build
 ```
 
 The commands above will create an archive file in the coreos directory which should
@@ -31,7 +31,7 @@ To install the build from the example above on another machine, copy the archive
 ```bash
 #on the install machine
 #copy the archive file into the coreos folder
-sudo ./corezfs install
+sudo ./corezfs/corezfs install
 ```
 
 If the installation is successful, the command "sudo zfs list" will return "no datasets available". If the installation is not successful, that command will probably complain about kernel drivers not being loaded.
