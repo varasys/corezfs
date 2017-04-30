@@ -158,38 +158,38 @@ EOF
 case "$1" in
     "build")
     	echo "Building ZFS on Linux (ZoL) on CoreOS"
-        rm -rf /opt     
-        mkdir -p /opt/{modules,.modules.wd,usr/{local/{share/corezfs,sbin,etc/systemd/{system,system-preset}},.local.wd}} \
-        || error_exit "$LINENO: Error creating overlay directories"
-        cp -a "{$DIR}/*" /opt/usr/local/share/corezfs
-        prepare_build_script
-        download_dev_env
-        launch_dev_env
-        delete_build_script
-        create_systemd_units
-        if [ $2 != "--no-archive" ]; then
-            tar -zcvhf "${ARCHIVE}" -C / --exclude=/opt/.modules.wd/* --exclude=/opt/usr/.local.wd opt
-        fi
+#         rm -rf /opt     
+#         mkdir -p /opt/{modules,.modules.wd,usr/{local/{share/corezfs,sbin,etc/systemd/{system,system-preset}},.local.wd}} \
+#         || error_exit "$LINENO: Error creating overlay directories"
+#         cp -a "{$DIR}/*" /opt/usr/local/share/corezfs
+#         prepare_build_script
+#         download_dev_env
+#         launch_dev_env
+#         delete_build_script
+#         create_systemd_units
+#         if [ $2 != "--no-archive" ]; then
+#             tar -zcvhf "${ARCHIVE}" -C / --exclude=/opt/.modules.wd/* --exclude=/opt/usr/.local.wd opt
+#         fi
         echo "Finished Building ZFS on Linux (ZoL) on CoreOS"
         ;;
     "install")
     	echo "Installing ZFS on Linux (ZoL) on CoreOS"
-        if [ -e "$ARCHIVE" ]; then
-            tar -zxvhf "$ARCHIVE" -C / \
-            || error_exit "$LINENO: Error extracting $ARCHIVE"
-        fi
-        tar -cvh -C /opt/usr/local/systemd * | tar -xvh -C /etc/systemd \
-        || error_exit "$LINENO: Error installing systemd unit files}"
-        
-        systemctl daemon-reload \
-        && systemctl start lib-modules.mount usr-local.mount \
-        || error_exit "$LINENO: Error mounting overlays}"
-        
-        ldconfig || error_exit "$LINENO: Error reloading shared libraries"
-        depmod || error_exit "$LINENO: Error running depmod"
-        
-        ls /opt/usr/local/systemd/system/* | xargs systemctl preset || error_exit "$LINENO: Error presetting systemd zfs units"
-        systemctl start zfs.target || error_exit "$LINENO: Error starting zfs.target systemd unit"
+#         if [ -e "$ARCHIVE" ]; then
+#             tar -zxvhf "$ARCHIVE" -C / \
+#             || error_exit "$LINENO: Error extracting $ARCHIVE"
+#         fi
+#         tar -cvh -C /opt/usr/local/systemd * | tar -xvh -C /etc/systemd \
+#         || error_exit "$LINENO: Error installing systemd unit files}"
+#         
+#         systemctl daemon-reload \
+#         && systemctl start lib-modules.mount usr-local.mount \
+#         || error_exit "$LINENO: Error mounting overlays}"
+#         
+#         ldconfig || error_exit "$LINENO: Error reloading shared libraries"
+#         depmod || error_exit "$LINENO: Error running depmod"
+#         
+#         ls /opt/usr/local/systemd/system/* | xargs systemctl preset || error_exit "$LINENO: Error presetting systemd zfs units"
+#         systemctl start zfs.target || error_exit "$LINENO: Error starting zfs.target systemd unit"
         echo "Finished Installing ZFS on Linux (ZoL) on CoreOS"
         ;;
     *)
