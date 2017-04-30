@@ -185,9 +185,53 @@ case $1 in
 		;;
 	*)
 		cat <<-EOF
-		Usage: sudo ./corezfs/install-zfs.sh
-					Install zfs and create archive file with default name
-		       sudo 
-		EOF
+		# corezfs - Build and install ZFS on CoreOS
+		
+		## Usage:
+		
+			sudo ./corezfs/install-zfs.sh build [archive_file]
+				Build zfs and create an archive file, optionally specifying the
+				file name, which can be used to transfer the build artifacts to
+				another computer
+		       
+			sudo ./corezfs/install-zfs.sh build --no-archive
+		    	Build zfs and don''t create an archive
+		       
+			sudo ./corezfs/install-zfs.sh install [archive_file]
+		     	Install zfs (after building it) using the optional archive_file
+		    	specified, or the default archive_file if none is specified, or by
+		    	directly copying from the build output if no archive file can
+		   		be found.
+		       	
+		## Archive Files
+		In order to facilitate reusing builds on different machines (but running the
+		same CoreOS version) an archive file containing all the files required to
+		install zfs is created at the end of the build process (unless --no-archive
+		is specified) and saved in the same directory the script was executed from
+		unless an alternate location is supplied in the "archive_file" argument.
+		
+		The archive can be copied to another machine with the same CoreOS version and
+		used to	install ZFS without having to recompile it. The default archive file
+		name is "corezfs_[arch]_[version]_[channel]" unless an optional name is provided
+		as the archive_file argument. Note that using the default names will help ensure
+		an archive was built on a platform compatable with the running platform.
+		
+		At the begining of the build this script is copied to the
+		/usr/local/shared/corezfs/ folder, so any customizations done to this script
+		before building will be available for reference in that folder in the archive.
+		
+		## Typical Build and Install Workflow
+		When using the default archive_file names:		
+		```bash
+		./corezfs/install-zfs.sh build
+		./corezfs/install-zfs.sh install
+		```
+		
+		When using custom archive_file names:
+		```bash
+		./corezfs/install-zfs.sh build ./my-archive-name
+		./corezfs/install-zfs.sh install ./my-archive_name
+		```
 		;;
+		EOF
 esac
