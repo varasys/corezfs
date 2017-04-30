@@ -176,9 +176,9 @@ case "$1" in
             tar -zxvf "$ARCHIVE" -C / \
             || error_exit "$LINENO: Error extracting $ARCHIVE"
         fi
-        ln -s /opt/usr/local/etc/corezfs /etc/corezfs \
-        && ln -s /opt/usr/local/etc/systemd/system/* /etc/systemd/system/ \
-        && ln -s /opt/usr/local/etc/systemd/system-preset/* /etc/systemd/system-preset/ \
+        ln -fs /opt/usr/local/etc/zfs /etc/zfs \
+        && ln -fs /opt/usr/local/etc/systemd/system/* /etc/systemd/system/ \
+        && ln -fs /opt/usr/local/etc/systemd/system-preset/* /etc/systemd/system-preset/ \
         || error_exit "$LINENO: Error installing systemd unit files}"
         
         systemctl daemon-reload \
@@ -188,7 +188,7 @@ case "$1" in
         ldconfig || error_exit "$LINENO: Error reloading shared libraries"
         depmod || error_exit "$LINENO: Error running depmod"
         
-        (cd /opt/usr/local/systemd/system; ls) | xargs systemctl preset || error_exit "$LINENO: Error presetting systemd zfs units"
+        (cd /opt/usr/local/etc/systemd/system; ls) | xargs systemctl preset || error_exit "$LINENO: Error presetting systemd zfs units"
         systemctl start zfs.target || error_exit "$LINENO: Error starting zfs.target systemd unit"
         echo "Finished Installing ZFS on Linux (ZoL) on CoreOS"
         ;;
