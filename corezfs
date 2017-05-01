@@ -137,6 +137,10 @@ function create_systemd_units {
 	Description=ZFS Kernel Modules
 	Before=zfs-import-cache.service
 	Before=zfs-import-scan.service
+	Before=zed.service
+	Before=zfs-mount.service
+	Before=zfs-share.service
+	Before=zfs-zed.service
 
 	[Service]
 	Type=oneshot
