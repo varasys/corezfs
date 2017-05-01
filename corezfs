@@ -7,17 +7,21 @@ function error_exit {
 
 [ "$EUID" -eq 0 ] || error_exit "Script must be run as root"
 
-DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-
 . /usr/share/coreos/release
 . /usr/share/coreos/update.conf
 . /etc/coreos/update.conf
 
-ARCHIVE="${2:-${DIR}/corezfs_${COREOS_RELEASE_BOARD}_${COREOS_RELEASE_VERSION}_${GROUP:-stable}}.tar.gz"
+BUILDROOT="/tmp/corezfs"
+SPLREPO="https://api.github.com/repos/zfsonlinux/spl/tarball"
+ZFSREPO="https://api.github.com/repos/zfsonlinux/zfs/tarball"
+
+VERSION="corezfs_${COREOS_RELEASE_BOARD}_${COREOS_RELEASE_VERSION}_${GROUP:-stable}}"
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+ARCHIVE="${2:-${DIR}/${VERSION}.tar.gz}"
 
 function prepare_build_script {
 	echo "Preparing build script"
-	cat > /opt/usr/local/sbin/build-zfs.sh-"EOF"
+	cat > ${BUILDROOT}/usr/local/sbin/build-zfs.sh <<-"EOF"
 	#!/bin/bash
 
 	function error_exit
@@ -42,40 +46,36 @@ function prepare_build_script {
 	|| error_exit "$LINENO: Error installing development tools"
 
 	mkdir spl \
-	&& curl -L https://api.github.com/repos/zfsonlinux/spl/tarball \
+	&& curl -L "$SPLREPO" \
 	| tar -zxv -C spl --strip-components=1 \
 	|| error_exit "$LINENO: Error cloning spl repository"
 	cd spl
 	./autogen.sh || error_exit "$LINENO: Error running autogen.sh for spl"
-	./configure --prefix /usr/local || error_exit "$LINENO: Error configuring spl"
+	./configure || error_exit "$LINENO: Error configuring spl"
 	make -j$(nproc) || error_exit "$LINENO: Error making spl"
 	make install || error_exit "$LINENO: Error installing spl"
 	cd ../
 	mkdir zfs \
-	&& curl -L https://api.github.com/repos/zfsonlinux/zfs/tarball \
+	&& curl -L "$ZFSREPO" \
 	| tar -zxv -C zfs --strip-components=1 \
 	|| error_exit "$LINENO: Error cloning zfs repository"
 	cd zfs
 	./autogen.sh || error_exit "$LINENO: Error running autogen.sh for zfs"
-	./configure \
-		--disable-sysvinit \
-		--with-systemdunitdir=/usr/local/etc/systemd/system \
-		--with-systemdpresetdir=/usr/local/etc/systemd/system-preset \
-	|| error_exit "$LINENO: Error configuring zfs"
+	./configure --disable-sysvinit || error_exit "$LINENO: Error configuring zfs"
 	make -j$(nproc) || error_exit "$LINENO: Error making zfs"
 	make install || error_exit "$LINENO: Error installing zfs"
 	EOF
-	chmod +x /opt/usr/local/sbin/build-zfs.sh
+	chmod +x ${BUILDROOT}/usr/local/sbin/build-zfs.sh
 }
 
 function delete_build_script {
 	echo "Deleting build script"
-	rm -f /opt/usr/local/sbin/build-zfs.sh
+	rm -f ${BUILDROOT}/usr/local/sbin/build-zfs.sh
 }
 
 function download_dev_env {
 	echo "Downloading development environment"
-	if [ ! -e "$DIR/coreos_developer_container.bin" ]; then
+	if [ ! -e "${BUILDROOT}/coreos_developer_container.bin" ]; then
 		url="http://${GROUP:-stable}.release.core-os.net/$COREOS_RELEASE_BOARD/$COREOS_RELEASE_VERSION/coreos_developer_container.bin.bz2"
 		gpg2 --recv-keys 48F9B96A2E16137F && \
 		curl -L "$url" |
@@ -91,8 +91,9 @@ function launch_dev_env {
 		--ephemeral \
 		--tmpfs=/usr/src \
 		--chdir=/usr/src \
-		--overlay=/lib/modules:/opt/modules:/lib/modules \
-		--bind=/opt/usr/local:/usr/local \
+		--overlay=/lib/modules:${BUILDROOT}/modules:/lib/modules \
+		--overlay=/usr/local:${BUILDROOT}/usr/local:/usr/local \
+		--overlay=/etc:${BUILDROOT}/etc:/etc
 		--image="$DIR/coreos_developer_container.bin" \
 		build-zfs.sh \
 		|| error_exit "$LINENO: Error running development container"
@@ -100,7 +101,7 @@ function launch_dev_env {
 
 function create_systemd_units {
 	echo "Creating Systemd Unit Files"
-	cat > /opt/usr/local/etc/systemd/system/lib-modules.mount <<-EOF
+	cat > ${BUILDROOT}/etc/systemd/system/lib-modules.mount <<-EOF
 	[Unit]
 	Description=ZFS Kernel Modules
 	ConditionPathExists=/opt/modules
@@ -116,7 +117,7 @@ function create_systemd_units {
 	WantedBy=zfs.service
 	EOF
 
-	cat > /opt/usr/local/etc/systemd/system/usr-local.mount <<-EOF
+	cat > ${BUILDROOT}/etc/systemd/system/usr-local.mount <<-EOF
 	[Unit]
 	Description=ZFS User Tools
 	ConditionPathExists=/opt/usr/local
@@ -132,7 +133,7 @@ function create_systemd_units {
 	WantedBy=zfs.target
 	EOF
 
-	cat > /opt/usr/local/etc/systemd/system/zfs.service <<-EOF
+	cat > ${BUILDROOT}/etc/systemd/system/zfs.service <<-EOF
 	[Unit]
 	Description=ZFS Kernel Modules
 	Before=zfs-import-cache.service
@@ -151,7 +152,7 @@ function create_systemd_units {
 	WantedBy=zfs.target
 	EOF
 
-	cat > /opt/usr/local/etc/systemd/system-preset/40-overlays.preset <<-EOF
+	cat > ${BUILDROOT}/etc/systemd/system-preset/40-overlays.preset <<-EOF
 	enable usr-local.mount
 	enable lib-modules.mount
 	enable zfs.service
@@ -160,30 +161,27 @@ function create_systemd_units {
 
 case "$1" in
 	build)
-		echo "Building ZFS on Linux (ZoL) on CoreOS"
-		rm -rf /opt		
-		mkdir -p /opt/{modules,.modules.wd,usr/{local/{sbin,etc/systemd/{system,system-preset}},.local.wd}} \
+		echo "Building ZFS on Linux (ZoL) for CoreOS $VERSION"
+		rm -rf ${BUILDROOT}		
+		mkdir -p ${BUILDROOT}/{modules,.modules.wd,etc/systemd/{system,system-preset},usr/{local/sbin,.local.wd}} \
 		|| error_exit "$LINENO: Error creating overlay directories"
 		prepare_build_script
 		download_dev_env
 		launch_dev_env
 		delete_build_script
 		create_systemd_units
-		if [ "$2" != "--no-archive" ]; then
-			tar -zcvf "${ARCHIVE}" -C / --exclude='opt/.modules.wd/*' --exclude='opt/usr/.local.wd/*' opt
-		fi
-		echo "Finished Building ZFS on Linux (ZoL) on CoreOS"
+		tar -zcvPf "${ARCHIVE}" -C "$BUILDROOT" *
+		cat <<-EOF
+		Finished Building ZFS on Linux (ZoL) for CoreOS $VERSION
+		Archive file: $ARCHIVE
+		The temporary build folder at $BUILDROOT may be deleted
+		EOF
 		;;
 	install)
-		echo "Installing ZFS on Linux (ZoL) on CoreOS"
-		if [ -e "$ARCHIVE" ]; then
-			tar -zxvf "$ARCHIVE" -C / \
-			|| error_exit "$LINENO: Error extracting $ARCHIVE"
-		fi
-		ln -fs /opt/usr/local/etc/zfs /etc/zfs \
-		&& ln -fs /opt/usr/local/etc/systemd/system/* /etc/systemd/system/ \
-		&& ln -fs /opt/usr/local/etc/systemd/system-preset/* /etc/systemd/system-preset/ \
-		|| error_exit "$LINENO: Error installing systemd unit files}"
+		echo "Installing ZFS on Linux (ZoL) for CoreOS"
+		
+		[ -e "$ARCHIVE" ] || error_exit "$LINENO: Error can't find archive: $ARCHIVE"
+		tar -zxvf "$ARCHIVE" || error_exit "$LINENO: Error extracting $ARCHIVE"
 		
 		systemctl daemon-reload \
 		&& systemctl start lib-modules.mount usr-local.mount \
@@ -194,67 +192,33 @@ case "$1" in
 		
 		(cd /opt/usr/local/etc/systemd/system; ls) | xargs systemctl preset || error_exit "$LINENO: Error presetting systemd zfs units"
 		systemctl start zfs.target || error_exit "$LINENO: Error starting zfs.target systemd unit"
-		echo "Finished Installing ZFS on Linux (ZoL) on CoreOS"
+		echo "Finished Installing ZFS on Linux (ZoL) for CoreOS"
 		;;
 	*)
 		cat <<-"EOF"
-		# corezfs - Build and install ZFS on CoreOS
+		# corezfs - Download, build, and install ZFS on Linux (ZoL) for CoreOS
 
-		This script is available from https://github.com/varasys/corezfs
+		This script is available from https://github.com/varasys/corezfs and should be
+		run on a fresh CoreOS install. It should work for all CoreOS architectures and
+		versions and all CoreOS updated channels (ie. stable, beta and alpha).
 
 		## Usage:
 		    sudo ./corezfs build [archive_file]
-		        Build zfs and create an archive file, optionally specifying the
-		        file name, which can be used to transfer the build artifacts to
-		        another computer.
-	   
-		    sudo ./corezfs build --no-archive
-		        Build zfs and don''t create an archive.
+				Build zfs and create an archive file, optionally specifying the
+				file name, which can be used to transfer the build artifacts to
+				another computer.
 	   
 		    sudo ./corezfs install [archive_file]
-		        Install zfs (after building it) using the optional archive_file.
-		        If no archive_file is specified, the default archive-file name
-		        will be used. If the default archive file is not found the output
-		        from the build will be used directly.
+				Install zfs (after building it) using the optional archive_file.
+				If no archive_file is specified, the default archive-file name
+				based on the currently running CoreOS version will be used. The form
+				of the archive name is:
+				    corezfs-<architucture>-<version>-<update_channel>.tar.gz
 		
 		Full installation is seperated into two steps, build then install, so the
 		script may be used to either build and install directly onto a single machine,
 		or to build on a development machine, and then install on multiple target
 		machines.
-		
-		## Archive Files
-		In order to facilitate reusing builds on different machines (but running the
-		same CoreOS version) an archive file containing all the files required to
-		install zfs is created at the end of the build process (unless --no-archive
-		is specified) and saved in the same directory the script was executed from
-		unless an alternate location is supplied in the "archive_file" argument.
-
-		If no "archive_file" argument is provided, the default archive file name will be
-		of the form "corezfs_amd64-usr_1353.7.0_stable.tar.gz" using the actual
-		machine architecture, version, and update channel of the CoreOS version
-		installed on the build machine.
-
-		The archive can be copied to another machine with the same CoreOS version and
-		used to install ZFS without having to recompile it.
-		EOF
-		
-		## Examples
-		These examples assume the CoreOS architecture is "amd64-usr", version is
-		"1353.7.0" and the updated channel is "stable".
-		
-		Build and install with no archive:
-		    sudo ./corezfs build --no-archive
-		    sudo ./corezfs install
-		    
-		Build and install, and then install on a second machine:
-		    #On the build machine
-		    sudo ./corezfs build
-		    sudo ./corezfs install
-		    
-		    #On the second machine (install only)
-		    scp build_machine:~/corezfs/corezfs_amd64-usr_1353.7.0_stable.tar.gz \
-		    ./corezfs/ #transfer the file any way that is convenient
-		    sudo ./corezfs install
 		EOF
 		;;
 esac
