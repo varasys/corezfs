@@ -5,23 +5,23 @@ function error_exit {
 	exit 1
 }
 
-[ "$EUID" -eq 0 ] || error_exit "Script must be run as root"
+SPLREPO="https://api.github.com/repos/zfsonlinux/spl/tarball"
+ZFSREPO="https://api.github.com/repos/zfsonlinux/zfs/tarball"
 
 . /usr/share/coreos/release
 . /usr/share/coreos/update.conf
 . /etc/coreos/update.conf
 
-BUILDROOT="/tmp/corezfs"
-SPLREPO="https://api.github.com/repos/zfsonlinux/spl/tarball"
-ZFSREPO="https://api.github.com/repos/zfsonlinux/zfs/tarball"
-
-VERSION="corezfs_${COREOS_RELEASE_BOARD}_${COREOS_RELEASE_VERSION}_${GROUP:-stable}}"
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+BUILDROOT="$DIR/build"
+DEVREPO="http://${GROUP:-stable}.release.core-os.net/$COREOS_RELEASE_BOARD/$COREOS_RELEASE_VERSION/coreos_developer_container.bin.bz2"
+DEVENV="$DIR/coreos_developer_container.bin"
+VERSION="corezfs_${COREOS_RELEASE_BOARD}_${COREOS_RELEASE_VERSION}_${GROUP:-stable}"
 ARCHIVE="${2:-${DIR}/${VERSION}.tar.gz}"
 
 function prepare_build_script {
 	echo "Preparing build script"
-	cat > ${BUILDROOT}/usr/local/sbin/build-zfs.sh <<-"EOF"
+	cat > ${BUILDROOT}/opt/usr/local/sbin/build-zfs.sh <<-"EOF"
 	#!/bin/bash
 
 	function error_exit
@@ -29,8 +29,6 @@ function prepare_build_script {
 		echo "$(basename $0): ${1:-"Unknown Error"}" 1>&2
 		exit 1
 	}
-
-	[ "$EUID" -eq 0 ] || error_exit "Script must be run as root"
 
 	emerge-gitclone \
 	&& (. /usr/share/coreos/release; \
@@ -61,11 +59,15 @@ function prepare_build_script {
 	|| error_exit "$LINENO: Error cloning zfs repository"
 	cd zfs
 	./autogen.sh || error_exit "$LINENO: Error running autogen.sh for zfs"
-	./configure --disable-sysvinit || error_exit "$LINENO: Error configuring zfs"
+	./configure \
+		--disable-sysvinit \
+		--with-systemdunitdir=/usr/local/etc/systemd/system \
+		--with-systemdpresetdir=/usr/local/etc/systemd/system-preset \
+	|| error_exit "$LINENO: Error configuring zfs"
 	make -j$(nproc) || error_exit "$LINENO: Error making zfs"
 	make install || error_exit "$LINENO: Error installing zfs"
 	EOF
-	chmod +x ${BUILDROOT}/usr/local/sbin/build-zfs.sh
+	chmod +x ${BUILDROOT}/opt/usr/local/sbin/build-zfs.sh
 }
 
 function delete_build_script {
@@ -75,13 +77,10 @@ function delete_build_script {
 
 function download_dev_env {
 	echo "Downloading development environment"
-	if [ ! -e "${BUILDROOT}/coreos_developer_container.bin" ]; then
-		url="http://${GROUP:-stable}.release.core-os.net/$COREOS_RELEASE_BOARD/$COREOS_RELEASE_VERSION/coreos_developer_container.bin.bz2"
+	if [ ! -e "$DEVENV" ]; then	
 		gpg2 --recv-keys 48F9B96A2E16137F && \
-		curl -L "$url" |
-			tee >(bzip2 -d > "$DIR/coreos_developer_container.bin") |
-			gpg2 --verify <(curl -Ls "$url.sig") - \
-		|| error_exit "$LINENO: Error downloading coreos_developer_container from $url"
+		curl -L "$DEVREPO" | tee >(bzip2 -d > "$DEVENV") | gpg2 --verify <(curl -Ls "${DEVREPO}.sig") - \
+		|| error_exit "$LINENO: Error downloading coreos_developer_container from $DEVREPO"
 	fi
 }
 
@@ -91,33 +90,34 @@ function launch_dev_env {
 		--ephemeral \
 		--tmpfs=/usr/src \
 		--chdir=/usr/src \
-		--overlay=/lib/modules:${BUILDROOT}/modules:/lib/modules \
-		--overlay=/usr/local:${BUILDROOT}/usr/local:/usr/local \
-		--overlay=/etc:${BUILDROOT}/etc:/etc
-		--image="$DIR/coreos_developer_container.bin" \
+		--bind="$BUILDROOT/opt/usr/local:/usr/local" \
+		--overlay="/lib/modules:$BUILDROOT/opt/usr/local/lib/modules:/lib/modules" \
+		--image="$DEVENV" \
+		--setenv="SPLREPO=$SPLREPO" \
+		--setenv="ZFSREPO=$ZFSREPO" \
 		build-zfs.sh \
 		|| error_exit "$LINENO: Error running development container"
 }
 
 function create_systemd_units {
 	echo "Creating Systemd Unit Files"
-	cat > ${BUILDROOT}/etc/systemd/system/lib-modules.mount <<-EOF
+	cat > ${BUILDROOT}/opt/usr/local/etc/systemd/system/lib-modules.mount <<-EOF
 	[Unit]
 	Description=ZFS Kernel Modules
-	ConditionPathExists=/opt/modules
+	ConditionPathExists=/opt/usr/local/lib/modules
 	Before=zfs.service
 
 	[Mount]
 	Type=overlay
 	What=overlay
 	Where=/lib/modules
-	Options=lowerdir=/lib/modules,upperdir=/opt/modules,workdir=/opt/.modules.wd
+	Options=lowerdir=/lib/modules,upperdir=/opt/usr/local/lib/modules,workdir=/opt/usr/local/lib/.modules.wd
 
 	[Install]
 	WantedBy=zfs.service
 	EOF
 
-	cat > ${BUILDROOT}/etc/systemd/system/usr-local.mount <<-EOF
+	cat > ${BUILDROOT}/opt/usr/local/etc/systemd/system/usr-local.mount <<-EOF
 	[Unit]
 	Description=ZFS User Tools
 	ConditionPathExists=/opt/usr/local
@@ -133,7 +133,7 @@ function create_systemd_units {
 	WantedBy=zfs.target
 	EOF
 
-	cat > ${BUILDROOT}/etc/systemd/system/zfs.service <<-EOF
+	cat > ${BUILDROOT}/opt/usr/local/etc/systemd/system/zfs.service <<-EOF
 	[Unit]
 	Description=ZFS Kernel Modules
 	Before=zfs-import-cache.service
@@ -152,7 +152,7 @@ function create_systemd_units {
 	WantedBy=zfs.target
 	EOF
 
-	cat > ${BUILDROOT}/etc/systemd/system-preset/40-overlays.preset <<-EOF
+	cat > ${BUILDROOT}/opt/usr/local/etc/systemd/system-preset/40-overlays.preset <<-EOF
 	enable usr-local.mount
 	enable lib-modules.mount
 	enable zfs.service
@@ -161,27 +161,39 @@ function create_systemd_units {
 
 case "$1" in
 	build)
-		echo "Building ZFS on Linux (ZoL) for CoreOS $VERSION"
+		echo "Building ZFS on Linux (ZoL) for CoreOS ($VERSION)"
+		[ "$EUID" -eq 0 ] || error_exit "Script must be run as root"
+		
 		rm -rf ${BUILDROOT}		
-		mkdir -p ${BUILDROOT}/{modules,.modules.wd,etc/systemd/{system,system-preset},usr/{local/sbin,.local.wd}} \
+		mkdir -p ${BUILDROOT}/{opt/usr/{local/{lib/{modules,.modules.wd},etc,sbin},.local.wd},etc/systemd/{system,system-preset}} \
 		|| error_exit "$LINENO: Error creating overlay directories"
 		prepare_build_script
 		download_dev_env
 		launch_dev_env
 		delete_build_script
 		create_systemd_units
-		tar -zcvPf "${ARCHIVE}" -C "$BUILDROOT" *
+		
+		(cd "$BUILDROOT"/opt/usr/local/etc/systemd/system && ls) \
+		| xargs -I {} sudo ln -s /opt/usr/local/etc/systemd/system/{} "$BUILDROOT"/etc/systemd/system/ \
+		|| error_exit "$LINENO: Error creating links to systemd unit files"
+		
+		(cd "$BUILDROOT"/opt/usr/local/etc/systemd/system-preset && ls) \
+		| xargs -I {} sudo ln -s /opt/usr/local/etc/systemd/system-preset/{} "$BUILDROOT"/etc/systemd/system-preset/ \
+		|| error_exit "$LINENO: Error creating links to systemd preset files"
+		
+		(cd "$BUILDROOT" && tar -zcvf "${ARCHIVE}" *)
 		cat <<-EOF
-		Finished Building ZFS on Linux (ZoL) for CoreOS $VERSION
+		Finished Building ZFS on Linux (ZoL) for CoreOS ($VERSION)
 		Archive file: $ARCHIVE
-		The temporary build folder at $BUILDROOT may be deleted
+		Run 'sudo rm -rf $BUILDROOT' to delete the temporary build directory
 		EOF
 		;;
 	install)
-		echo "Installing ZFS on Linux (ZoL) for CoreOS"
+		echo "Installing ZFS on Linux (ZoL) for CoreOS ($VERSION)"
+		[ "$EUID" -eq 0 ] || error_exit "Script must be run as root"
 		
 		[ -e "$ARCHIVE" ] || error_exit "$LINENO: Error can't find archive: $ARCHIVE"
-		tar -zxvf "$ARCHIVE" || error_exit "$LINENO: Error extracting $ARCHIVE"
+		tar -zxvf "$ARCHIVE" -C / || error_exit "$LINENO: Error extracting $ARCHIVE"
 		
 		systemctl daemon-reload \
 		&& systemctl start lib-modules.mount usr-local.mount \
@@ -190,9 +202,11 @@ case "$1" in
 		ldconfig || error_exit "$LINENO: Error reloading shared libraries"
 		depmod || error_exit "$LINENO: Error running depmod"
 		
-		(cd /opt/usr/local/etc/systemd/system; ls) | xargs systemctl preset || error_exit "$LINENO: Error presetting systemd zfs units"
+		(cd /opt/usr/local/etc/systemd/system; ls) | xargs systemctl preset \
+		|| error_exit "$LINENO: Error presetting systemd zfs units"
+
 		systemctl start zfs.target || error_exit "$LINENO: Error starting zfs.target systemd unit"
-		echo "Finished Installing ZFS on Linux (ZoL) for CoreOS"
+		echo "Finished Installing ZFS on Linux (ZoL) for CoreOS ($VERSION)"
 		;;
 	*)
 		cat <<-"EOF"
