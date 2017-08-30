@@ -78,7 +78,7 @@ function delete_build_script {
 function download_dev_env {
 	echo "Downloading development environment"
 	if [ ! -e "$DEVENV" ]; then	
-		gpg2 --recv-keys 48F9B96A2E16137F && \
+		gpg2 --keyserver pgp.mit.edu --recv-keys 48F9B96A2E16137F && \
 		curl -L "$DEVREPO" | tee >(bzip2 -d > "$DEVENV") | gpg2 --verify <(curl -Ls "${DEVREPO}.sig") - \
 		|| error_exit "$LINENO: Error downloading coreos_developer_container from $DEVREPO"
 	fi
