@@ -26,14 +26,17 @@ function prepare_build_script {
 
 	function error_exit
 	{
-		echo "$(basename $0): ${1:-"Unknown Error"}" 1>&2
-		exit 1
+	    echo "$(basename $0): ${1:-"Unknown Error"}" 1>&2
+	    exit 1
 	}
+	
+	mkdir -p /usr/local/src
+	cd /usr/local/src
 
 	emerge-gitclone \
 	&& (. /usr/share/coreos/release; \
 	git -C /var/lib/portage/coreos-overlay checkout build-${COREOS_RELEASE_VERSION%%.*}) \
-	||	error_exit "$LINENO: Error installing emerge-gitclone"
+	|| error_exit "$LINENO: Error installing emerge-gitclone"
 
 	emerge -gKv coreos-sources \
 	&& gzip -cd /proc/config.gz > /usr/src/linux/.config \
@@ -88,8 +91,6 @@ function launch_dev_env {
 	echo "Launching development container"
 	sudo systemd-nspawn \
 		--ephemeral \
-		--tmpfs=/usr/src \
-		--chdir=/usr/src \
 		--bind="$BUILDROOT/opt/usr/local:/usr/local" \
 		--overlay="/lib/modules:$BUILDROOT/opt/usr/local/lib/modules:/lib/modules" \
 		--image="$DEVENV" \
