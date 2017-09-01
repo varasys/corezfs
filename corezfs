@@ -64,8 +64,7 @@ read -d '' build_script <<-'EOF'
 	(cd spl;
 	./autogen.sh || log_error "$LINENO: Error running autogen.sh for spl" 1
 	./configure || log_error "$LINENO: Error configuring spl" 1
-	make -j$(nproc) || log_error "$LINENO: Error making spl" 1
-	make install || log_error "$LINENO: Error installing spl" 1)
+	make -j$(nproc) || log_error "$LINENO: Error making spl" 1)
 
 	mkdir zfs \
 	&& curl -L "$ZFSREPO" \
@@ -75,32 +74,39 @@ read -d '' build_script <<-'EOF'
 	./autogen.sh || log_error "$LINENO: Error running autogen.sh for zfs" 1
 	./configure \
 		--disable-sysvinit \
-		--with-systemdunitdir=/usr/local/etc/systemd/system \
-		--with-systemdpresetdir=/usr/local/etc/systemd/system-preset \
 	|| log_error "$LINENO: Error configuring zfs" 1
-	make -j$(nproc) || log_error "$LINENO: Error making zfs" 1
-	make install || log_error "$LINENO: Error installing zfs" 1)
+	make -j$(nproc) || log_error "$LINENO: Error making zfs" 1)
+
+ # these can be used in the configure line above
+ #		--with-systemdunitdir=/usr/local/etc/systemd/system \
+ #		--with-systemdpresetdir=/usr/local/etc/systemd/system-preset \
+
+	mount -t overlay -o lowerdir=/usr,upperdir=/overlay/usr,workdir=/tmp/usr /usr
+	mount -t overlay -o lowerdir=/etc,upperdir=/overlay/etc,workdir=/tmp/etc /etc
+
+	(cd spl; make install || log_error "$LINENO: Error installing spl" 1)
+	(cd zfs; make install || log_error "$LINENO: Error installing zfs" 1)
 EOF
 
 function create_systemd_units {
-	echo "Creating Systemd Unit Files"
-	cat > ${BUILDROOT}/opt/usr/local/etc/systemd/system/lib-modules.mount <<-EOF
+	log_entry "Creating Systemd Unit Files"
+	cat > ${BUILDROOT}/etc/systemd/system/lib-modules.mount <<-EOF
 	[Unit]
 	Description=Mount ZFS Kernel Modules Overlay
-	ConditionPathExists=/opt/usr/local/lib/modules
+	ConditionPathExists=/opt/corezfs/lib/modules
 	Before=zfs.service
 
 	[Mount]
 	Type=overlay
 	What=overlay
 	Where=/lib/modules
-	Options=lowerdir=/lib/modules,upperdir=/opt/usr/local/lib/modules,workdir=/opt/usr/local/lib/.modules.wd
+	Options=lowerdir=/lib/modules,upperdir=/opt/corezfs/lib/modules
 
 	[Install]
 	RequiredBy=zfs.service
 	EOF
 
-	cat > ${BUILDROOT}/opt/usr/local/etc/systemd/system/usr-local.mount <<-EOF
+	cat > ${BUILDROOT}/etc/systemd/system/usr-local.mount <<-EOF
 	[Unit]
 	Description=ZFS User Tools
 	ConditionPathExists=/opt/usr/local
@@ -116,7 +122,7 @@ function create_systemd_units {
 	WantedBy=zfs.target
 	EOF
 
-	cat > ${BUILDROOT}/opt/usr/local/etc/systemd/system/zfs.service <<-EOF
+	cat > ${BUILDROOT}/etc/systemd/system/zfs.service <<-EOF
 	[Unit]
 	Description=ZFS Kernel Modules
 	Before=zfs-import-cache.service
@@ -135,7 +141,7 @@ function create_systemd_units {
 	WantedBy=zfs.target
 	EOF
 
-	cat > ${BUILDROOT}/opt/usr/local/etc/systemd/system-preset/40-overlays.preset <<-EOF
+	cat > ${BUILDROOT}/etc/systemd/system-preset/40-overlays.preset <<-EOF
 	enable usr-local.mount
 	enable lib-modules.mount
 	enable zfs.service
@@ -146,61 +152,69 @@ case "$1" in
 	build)
 		log_entry "Building ZFS on Linux (ZoL) for CoreOS ($VERSION)"
 		
-		rm -rf "${BUILDROOT}" && mkdir -p "${BUILDROOT}/usr/local/sbin" \
+		log_entry "Creating build directory"
+		rm -rf "${BUILDROOT}" && mkdir -p ${BUILDROOT}/{overlay/{etc,usr,opt/corezfs/lib/modules}} \
 		|| log_error "$LINENO: Error creating directory ${BUILDROOT}" 1
 		
 		log_entry "Preparing build script"
-		echo "${build_script}" > "${BUILDROOT}/usr/local/sbin/build-zfs.sh" \
-		&& chmod +x "${BUILDROOT}/usr/local/sbin/build-zfs.sh" \
+		echo "${build_script}" > "${BUILDROOT}/overlay/build-zfs.sh" \
+		&& chmod +x "${BUILDROOT}/overlay/build-zfs.sh" \
 		|| log_error "$LINENO: Error creating build script" 1
 		
-		log_entry "Refreshing CoreOS signing key"
-		gpg2 --keyserver pgp.mit.edu --recv-keys 50E0885593D2DCB4 \
-		|| log_error "Failed to update signing key" 1
+		if [ ! -r "${DEVENV}" ]; then
+			log_entry "Refreshing CoreOS signing key"
+			gpg2 --keyserver pgp.mit.edu --recv-keys 50E0885593D2DCB4 \
+			|| log_error "Failed to update signing key" 1
 
-		if [ ! -r "${DEVENV}.bz2" ]; then
-			log_entry "Downloading development container"
-			curl -L "${DEVREPO}" > "${DEVENV}.bz2" \
-			|| log_error "Failed to download development container" 1
+			if [ ! -r "${DEVENV}.bz2" ]; then
+				log_entry "Downloading development container"
+				curl -L "${DEVREPO}" > "${DEVENV}.bz2" \
+				|| log_error "Failed to download development container" 1
+			fi
+
+			log_entry "Verifying development container signature"
+			(gpg2 --verify <(log_entry "Downloading development container signature"
+				curl -L ${DEVREPO}.sig \
+				|| log_error "Failed to download development container signature" 1) "${DEVENV}.bz2") \
+			|| log_error "Development container signature verification failed for ${DEVENV}.bz2" 1
+		
+			log_entry "Decompressing development container"
+			bunzip2 -fv "${DEVENV}.bz2" > "${DEVENV}" \
+			|| log_error "Failed to decompress development container" 1
 		fi
 
-		log_entry "Verifying development container signature"
-		gpg2 --verify <(log_entry "Downloading development container signature"
-			curl -L ${DEVREPO}.sig \
-			|| log_error "Failed to download development container signature" 1) "${DEVENV}.bz2" \
-		&& (log_entry "Decompressing development container"
-			bunzip2 "${DEVENV}.bz2" > "${DEVENV}" \
-			|| log_error "Failed to decompress development container" 1)  \
-		|| log_error "Development container signature verification failed for ${DEVENV}.bz2" 1
+		log_entry "Creating swap file" # build fails sometimes with only 1GB RAM
+		fallocate -l 1024m ${BUILDROOT}/swap \
+		&& chmod 600 ${BUILDROOT}/swap \
+		&& mkswap ${BUILDROOT}/swap \
+		&& swapon ${BUILDROOT}/swap \
+		&& trap "{ swapoff ${BUILDROOT}/swap && rm ${BUILDROOT}/swap \
+			|| log_error 'Failed to deactivate swap'; }" EXIT \
+		|| log_error "Error activating swap" 1
+
 
 		log_entry "Launching development container"
-		cmd=build-zfs.sh
-		cmd="bash --login" # uncomment this line to open a shell in the build container instead of running build script
 		sudo systemd-nspawn \
 			--image="${DEVENV}" \
 			--ephemeral \
 			--setenv="SPLREPO=${SPLREPO}" \
 			--setenv="ZFSREPO=${ZFSREPO}" \
-			${cmd} \
+			--overlay="/lib/modules:${BUILDROOT}/overlay/opt/corezfs/lib/modules:/lib/modules" \
+			--bind="${BUILDROOT}/overlay:/overlay" \
+			/overlay/build-zfs.sh \
 			|| log_error "$LINENO: Error running development container" 1
-		# --overlay="/usr:$BUILDROOT/opt/usr:/usr" \
-		# --overlay="/lib/modules:$BUILDROOT/opt/usr/local/lib/modules:/lib/modules"
-		# build-zfs.sh \
-		# 
-		log_entry "Deleting build script"
-		rm -f ${BUILDROOT}/usr/local/sbin/build-zfs.sh
 
 		create_systemd_units
 		
-		(cd "$BUILDROOT"/opt/usr/local/etc/systemd/system && ls) \
-		| xargs -I {} ln -s /opt/usr/local/etc/systemd/system/{} "$BUILDROOT"/etc/systemd/system/ \
-		|| error_exit "$LINENO: Error creating links to systemd unit files"
+		#(cd "$BUILDROOT"/opt/usr/local/etc/systemd/system && ls) \
+		#| xargs -I {} ln -s /opt/usr/local/etc/systemd/system/{} "$BUILDROOT"/etc/systemd/system/ \
+		#|| error_exit "$LINENO: Error creating links to systemd unit files"
 		
-		(cd "$BUILDROOT"/opt/usr/local/etc/systemd/system-preset && ls) \
-		| xargs -I {} ln -s /opt/usr/local/etc/systemd/system-preset/{} "$BUILDROOT"/etc/systemd/system-preset/ \
-		|| error_exit "$LINENO: Error creating links to systemd preset files"
+		#(cd "$BUILDROOT"/opt/usr/local/etc/systemd/system-preset && ls) \
+		#| xargs -I {} ln -s /opt/usr/local/etc/systemd/system-preset/{} "$BUILDROOT"/etc/systemd/system-preset/ \
+		#|| error_exit "$LINENO: Error creating links to systemd preset files"
 		
-		(cd "$BUILDROOT" && tar -zcvf "${ARCHIVE}" *)
+		(cd "$BUILDROOT" && tar -zcvf "${ARCHIVE}" opt etc usr)
 		cat <<-"EOF"
 		Finished Building ZFS on Linux (ZoL) for CoreOS ($VERSION)
 		Archive file: $ARCHIVE
