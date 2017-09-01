@@ -72,20 +72,11 @@ read -d '' build_script <<-'EOF'
 	|| log_error "$LINENO: Error cloning zfs repository" 1
 	(cd zfs;
 	./autogen.sh || log_error "$LINENO: Error running autogen.sh for zfs" 1
-	./configure \
-		--disable-sysvinit \
-	|| log_error "$LINENO: Error configuring zfs" 1
+	./configure --disable-sysvinit || log_error "$LINENO: Error configuring zfs" 1
 	make -j$(nproc) || log_error "$LINENO: Error making zfs" 1)
 
- # these can be used in the configure line above
- #		--with-systemdunitdir=/usr/local/etc/systemd/system \
- #		--with-systemdpresetdir=/usr/local/etc/systemd/system-preset \
-
-	mount -t overlay -o lowerdir=/usr,upperdir=/overlay/usr,workdir=/tmp/usr /usr
-	mount -t overlay -o lowerdir=/etc,upperdir=/overlay/etc,workdir=/tmp/etc /etc
-
-	(cd spl; make install || log_error "$LINENO: Error installing spl" 1)
-	(cd zfs; make install || log_error "$LINENO: Error installing zfs" 1)
+	(cd spl; DESTDIR=/overlay make install || log_error "$LINENO: Error installing spl" 1)
+	(cd zfs; DESTDIR=/overlay make install || log_error "$LINENO: Error installing zfs" 1)
 EOF
 
 function create_systemd_units {
@@ -153,12 +144,12 @@ case "$1" in
 		log_entry "Building ZFS on Linux (ZoL) for CoreOS ($VERSION)"
 		
 		log_entry "Creating build directory"
-		rm -rf "${BUILDROOT}" && mkdir -p ${BUILDROOT}/{overlay/{etc,usr,opt/corezfs/lib/modules}} \
+		rm -rf "${BUILDROOT}" && mkdir -p ${BUILDROOT}/{etc,usr,opt/corezfs/lib/modules} \
 		|| log_error "$LINENO: Error creating directory ${BUILDROOT}" 1
 		
 		log_entry "Preparing build script"
-		echo "${build_script}" > "${BUILDROOT}/overlay/build-zfs.sh" \
-		&& chmod +x "${BUILDROOT}/overlay/build-zfs.sh" \
+		echo "${build_script}" > "${BUILDROOT}/build-zfs.sh" \
+		&& chmod +x "${BUILDROOT}/build-zfs.sh" \
 		|| log_error "$LINENO: Error creating build script" 1
 		
 		if [ ! -r "${DEVENV}" ]; then
@@ -192,33 +183,24 @@ case "$1" in
 			|| log_error 'Failed to deactivate swap'; }" EXIT \
 		|| log_error "Error activating swap" 1
 
-
 		log_entry "Launching development container"
-		sudo systemd-nspawn \
+		systemd-nspawn \
 			--image="${DEVENV}" \
 			--ephemeral \
 			--setenv="SPLREPO=${SPLREPO}" \
 			--setenv="ZFSREPO=${ZFSREPO}" \
-			--overlay="/lib/modules:${BUILDROOT}/overlay/opt/corezfs/lib/modules:/lib/modules" \
-			--bind="${BUILDROOT}/overlay:/overlay" \
+			--overlay="/lib/modules:${BUILDROOT}/opt/corezfs/lib/modules:/lib/modules" \
+			--bind="${BUILDROOT}:/overlay" \
 			/overlay/build-zfs.sh \
 			|| log_error "$LINENO: Error running development container" 1
 
 		create_systemd_units
 		
-		#(cd "$BUILDROOT"/opt/usr/local/etc/systemd/system && ls) \
-		#| xargs -I {} ln -s /opt/usr/local/etc/systemd/system/{} "$BUILDROOT"/etc/systemd/system/ \
-		#|| error_exit "$LINENO: Error creating links to systemd unit files"
-		
-		#(cd "$BUILDROOT"/opt/usr/local/etc/systemd/system-preset && ls) \
-		#| xargs -I {} ln -s /opt/usr/local/etc/systemd/system-preset/{} "$BUILDROOT"/etc/systemd/system-preset/ \
-		#|| error_exit "$LINENO: Error creating links to systemd preset files"
-		
 		(cd "$BUILDROOT" && tar -zcvf "${ARCHIVE}" opt etc usr)
-		cat <<-"EOF"
-		Finished Building ZFS on Linux (ZoL) for CoreOS ($VERSION)
-		Archive file: $ARCHIVE
-		Run 'rm -rf ${BUILDROOT}' to delete the temporary build directory
+		cat <<-EOF
+			Finished Building ZFS on Linux (ZoL) for CoreOS ($VERSION)
+			Archive file: $ARCHIVE
+			Run 'rm -rf ${BUILDROOT}' to delete the temporary build directory
 		EOF
 		;;
 	install)
