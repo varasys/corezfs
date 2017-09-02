@@ -72,79 +72,103 @@ read -d '' build_script <<-'EOF'
 	|| log_error "$LINENO: Error cloning zfs repository" 1
 	(cd zfs;
 	./autogen.sh || log_error "$LINENO: Error running autogen.sh for zfs" 1
-	./configure --disable-sysvinit || log_error "$LINENO: Error configuring zfs" 1
+	./configure \
+		--disable-sysvinit \
+	|| log_error "$LINENO: Error configuring zfs" 1
 	make -j$(nproc) || log_error "$LINENO: Error making zfs" 1)
 
-	(cd spl; DESTDIR=/overlay make install || log_error "$LINENO: Error installing spl" 1)
-	(cd zfs; DESTDIR=/overlay make install || log_error "$LINENO: Error installing zfs" 1)
+	(cd spl; DESTDIR=/host/artifact make install || log_error "$LINENO: Error installing spl" 1)
+	(cd zfs; DESTDIR=/host/artifact make install || log_error "$LINENO: Error installing zfs" 1)
 EOF
 
 function create_systemd_units {
 	log_entry "Creating Systemd Unit Files"
-	cat > ${BUILDROOT}/etc/systemd/system/lib-modules.mount <<-EOF
-	[Unit]
-	Description=Mount ZFS Kernel Modules Overlay
-	ConditionPathExists=/opt/corezfs/lib/modules
-	Before=zfs.service
+	cat > /etc/systemd/system/lib.mount <<-EOF
+		[Unit]
+		Description=Mount ZFS lib overlay
+		ConditionPathExists=/opt/corezfs/lib
 
-	[Mount]
-	Type=overlay
-	What=overlay
-	Where=/lib/modules
-	Options=lowerdir=/lib/modules,upperdir=/opt/corezfs/lib/modules
+		[Mount]
+		Type=overlay
+		What=overlay
+		Where=/lib
+		Options=lowerdir=/lib,upperdir=/opt/corezfs/lib
 
-	[Install]
-	RequiredBy=zfs.service
+		[Install]
+		WantedBy=multi-user.target
 	EOF
 
-	cat > ${BUILDROOT}/etc/systemd/system/usr-local.mount <<-EOF
-	[Unit]
-	Description=ZFS User Tools
-	ConditionPathExists=/opt/usr/local
-	Before=zfs.service
+	cat > /etc/systemd/system/lib.automount <<-EOF
+		[Unit]
+		Description=Automount lib
 
-	[Mount]
-	Type=overlay
-	What=overlay
-	Where=/usr/local
-	Options=lowerdir=/usr/local,upperdir=/opt/usr/local,workdir=/opt/usr/.local.wd
+		[Automount]
+		Where=/lib
 
-	[Install]
-	WantedBy=zfs.target
+		[Install]
+		WantedBy=multi-user.target
 	EOF
 
-	cat > ${BUILDROOT}/etc/systemd/system/zfs.service <<-EOF
-	[Unit]
-	Description=ZFS Kernel Modules
-	Before=zfs-import-cache.service
-	Before=zfs-import-scan.service
-	Before=zed.service
-	Before=zfs-mount.service
-	Before=zfs-share.service
-	Before=zfs-zed.service
+	cat > /etc/systemd/system/sbin.mount <<-EOF
+		[Unit]
+		Description=Mount ZFS sbin overlay
+		ConditionPathExists=/opt/corezfs/sbin
 
-	[Service]
-	Type=oneshot
-	RemainAfterExit=yes
-	ExecStart=/usr/sbin/modprobe zfs
+		[Mount]
+		Type=overlay
+		What=overlay
+		Where=/sbin
+		Options=lowerdir=/opt/corezfs/sbin,upperdir=/sbin
 
-	[Install]
-	WantedBy=zfs.target
+		[Install]
+		WantedBy=multi-user.target
 	EOF
 
-	cat > ${BUILDROOT}/etc/systemd/system-preset/40-overlays.preset <<-EOF
-	enable usr-local.mount
-	enable lib-modules.mount
-	enable zfs.service
+	cat > /etc/systemd/system/sbin.automount <<-EOF
+		[Unit]
+		Description=Automount sbin
+
+		[Automount]
+		Where=/sbin
+
+		[Install]
+		WantedBy=multi-user.target
+	EOF
+
+	cat > /etc/systemd/system/usr.mount <<-EOF
+		[Unit]
+		Description=Mount ZFS usr overlay
+		ConditionPathExists=/opt/corezfs/usr
+
+		[Mount]
+		Type=overlay
+		What=overlay
+		Where=/usr
+		Options=lowerdir=/usr,upperdir=/opt/corezfs/usr
+
+		[Install]
+		WantedBy=multi-user.target
+	EOF
+
+	cat > /etc/systemd/system/usr.automount <<-EOF
+		[Unit]
+		Description=Automount usr
+
+		[Automount]
+		Where=/usr
+
+		[Install]
+		WantedBy=multi-user.target
 	EOF
 }
 
 case "$1" in
 	build)
+		create_systemd_units; exit 0;
 		log_entry "Building ZFS on Linux (ZoL) for CoreOS ($VERSION)"
 		
 		log_entry "Creating build directory"
-		rm -rf "${BUILDROOT}" && mkdir -p ${BUILDROOT}/{etc,usr,opt/corezfs/lib/modules} \
+		rm -rf "${BUILDROOT}" && mkdir -p "${BUILDROOT}/artifact/lib/modules" \
 		|| log_error "$LINENO: Error creating directory ${BUILDROOT}" 1
 		
 		log_entry "Preparing build script"
@@ -175,11 +199,11 @@ case "$1" in
 		fi
 
 		log_entry "Creating swap file" # build fails sometimes with only 1GB RAM
-		fallocate -l 1024m ${BUILDROOT}/swap \
-		&& chmod 600 ${BUILDROOT}/swap \
-		&& mkswap ${BUILDROOT}/swap \
-		&& swapon ${BUILDROOT}/swap \
-		&& trap "{ swapoff ${BUILDROOT}/swap && rm ${BUILDROOT}/swap \
+		fallocate -l 1024m ${DIR}/swap \
+		&& chmod 600 ${DIR}/swap \
+		&& mkswap ${DIR}/swap \
+		&& swapon ${DIR}/swap \
+		&& trap "{ swapoff ${DIR}/swap && rm ${DIR}/swap \
 			|| log_error 'Failed to deactivate swap'; }" EXIT \
 		|| log_error "Error activating swap" 1
 
@@ -189,14 +213,17 @@ case "$1" in
 			--ephemeral \
 			--setenv="SPLREPO=${SPLREPO}" \
 			--setenv="ZFSREPO=${ZFSREPO}" \
-			--overlay="/lib/modules:${BUILDROOT}/opt/corezfs/lib/modules:/lib/modules" \
-			--bind="${BUILDROOT}:/overlay" \
-			/overlay/build-zfs.sh \
+			--overlay="/lib/modules:${BUILDROOT}/artifact/lib/modules:/lib/modules" \
+			--bind="${BUILDROOT}:/host" \
+			--as-pid2 \
+			/host/build-zfs.sh \
 			|| log_error "$LINENO: Error running development container" 1
 
-		create_systemd_units
+		#create_systemd_units
 		
-		(cd "$BUILDROOT" && tar -zcvf "${ARCHIVE}" opt etc usr)
+		#(tar -zcvf "${ARCHIVE}" -C "$BUILDROOT/artifact" '*') \
+		#|| log_entry "Failed to create tarball" 1
+
 		cat <<-EOF
 			Finished Building ZFS on Linux (ZoL) for CoreOS ($VERSION)
 			Archive file: $ARCHIVE
