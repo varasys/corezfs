@@ -19,7 +19,7 @@ BUILDROOT="${DIR}/build"
 VERSION="${COREOS_RELEASE_BOARD}_${COREOS_RELEASE_VERSION}_${GROUP:=stable}"
 DEVREPO="https://${GROUP}.release.core-os.net/${COREOS_RELEASE_BOARD}/${COREOS_RELEASE_VERSION}/coreos_developer_container.bin.bz2"
 DEVENV="${DIR}/coreos_${VERSION}.bin"
-ARCHIVE="${DIR}/corezfs_${VERSION}.tar.gz"
+ARCHIVE="corezfs_${VERSION}.tar.gz"
 
 read -d '' help_message <<-EOF
 
@@ -76,99 +76,24 @@ read -d '' build_script <<-'EOF'
 		--disable-sysvinit \
 	|| log_error "$LINENO: Error configuring zfs" 1
 	make -j$(nproc) || log_error "$LINENO: Error making zfs" 1)
+	ldconfig
+	depmod
 
-	(cd spl; DESTDIR=/host/artifact make install || log_error "$LINENO: Error installing spl" 1)
-	(cd zfs; DESTDIR=/host/artifact make install || log_error "$LINENO: Error installing zfs" 1)
+	(cd spl; DESTDIR=/host/corezfs make install || log_error "$LINENO: Error installing spl" 1)
+	(cd zfs; DESTDIR=/host/corezfs make install || log_error "$LINENO: Error installing zfs" 1)
 EOF
-
-function create_systemd_units {
-	log_entry "Creating Systemd Unit Files"
-	cat > /etc/systemd/system/lib.mount <<-EOF
-		[Unit]
-		Description=Mount ZFS lib overlay
-		ConditionPathExists=/opt/corezfs/lib
-
-		[Mount]
-		Type=overlay
-		What=overlay
-		Where=/lib
-		Options=lowerdir=/lib,upperdir=/opt/corezfs/lib
-
-		[Install]
-		WantedBy=multi-user.target
-	EOF
-
-	cat > /etc/systemd/system/lib.automount <<-EOF
-		[Unit]
-		Description=Automount lib
-
-		[Automount]
-		Where=/lib
-
-		[Install]
-		WantedBy=multi-user.target
-	EOF
-
-	cat > /etc/systemd/system/sbin.mount <<-EOF
-		[Unit]
-		Description=Mount ZFS sbin overlay
-		ConditionPathExists=/opt/corezfs/sbin
-
-		[Mount]
-		Type=overlay
-		What=overlay
-		Where=/sbin
-		Options=lowerdir=/opt/corezfs/sbin,upperdir=/sbin
-
-		[Install]
-		WantedBy=multi-user.target
-	EOF
-
-	cat > /etc/systemd/system/sbin.automount <<-EOF
-		[Unit]
-		Description=Automount sbin
-
-		[Automount]
-		Where=/sbin
-
-		[Install]
-		WantedBy=multi-user.target
-	EOF
-
-	cat > /etc/systemd/system/usr.mount <<-EOF
-		[Unit]
-		Description=Mount ZFS usr overlay
-		ConditionPathExists=/opt/corezfs/usr
-
-		[Mount]
-		Type=overlay
-		What=overlay
-		Where=/usr
-		Options=lowerdir=/usr,upperdir=/opt/corezfs/usr
-
-		[Install]
-		WantedBy=multi-user.target
-	EOF
-
-	cat > /etc/systemd/system/usr.automount <<-EOF
-		[Unit]
-		Description=Automount usr
-
-		[Automount]
-		Where=/usr
-
-		[Install]
-		WantedBy=multi-user.target
-	EOF
-}
 
 case "$1" in
 	build)
-		create_systemd_units; exit 0;
 		log_entry "Building ZFS on Linux (ZoL) for CoreOS ($VERSION)"
 		
 		log_entry "Creating build directory"
-		rm -rf "${BUILDROOT}" && mkdir -p "${BUILDROOT}/artifact/lib/modules" \
+		rm -rf "${BUILDROOT}" && mkdir -p "${BUILDROOT}"/corezfs/usr/{lib64/modules,local/lib64,sbin} \
+		&& ln -s lib64 "${BUILDROOT}/corezfs/lib" \
+		&& ln -s usr/lib64 "${BUILDROOT}/corezfs/lib64" \
+		&& ln -s lib64 "${BUILDROOT}/corezfs/usr/lib" \
+		&& ln -s lib64 "${BUILDROOT}/corezfs/usr/local/lib" \
+		&& ln -s usr/sbin "${BUILDROOT}/corezfs/sbin" \
 		|| log_error "$LINENO: Error creating directory ${BUILDROOT}" 1
 		
 		log_entry "Preparing build script"
@@ -213,41 +138,53 @@ case "$1" in
 			--ephemeral \
 			--setenv="SPLREPO=${SPLREPO}" \
 			--setenv="ZFSREPO=${ZFSREPO}" \
-			--overlay="/lib/modules:${BUILDROOT}/artifact/lib/modules:/lib/modules" \
+			--overlay="/lib/modules:${BUILDROOT}/corezfs/usr/lib64/modules:/lib/modules" \
 			--bind="${BUILDROOT}:/host" \
 			--as-pid2 \
 			/host/build-zfs.sh \
 			|| log_error "$LINENO: Error running development container" 1
-
-		#create_systemd_units
 		
-		#(tar -zcvf "${ARCHIVE}" -C "$BUILDROOT/artifact" '*') \
-		#|| log_entry "Failed to create tarball" 1
+		log_entry "Creating Systemd Unit Files"
+		cat > ${BUILDROOT}/corezfs/usr/lib64/systemd/system/zfs-overlay.service <<-EOF
+			[Unit]
+			Description=CoreZFS usr overlay
+			After=usr.mount
+			Before=local-fs.target
+			ConditionPathExists=/opt/corezfs/usr
+
+			[Service]
+			Type=oneshot
+			ExecStart=/usr/bin/mount -t overlay overlay -o lowerdir=/usr:/opt/corezfs/usr /usr
+
+			[Install]
+			WantedBy=usr.mount
+		EOF
+		
+		log_entry "Creating ${ARCHIVE} tarball"
+		(tar -zcvf "${ARCHIVE}" -C "$BUILDROOT" --xform=s,^,opt/, corezfs/usr) \
+		|| log_entry "Failed to create tarball" 1
 
 		cat <<-EOF
 			Finished Building ZFS on Linux (ZoL) for CoreOS ($VERSION)
-			Archive file: $ARCHIVE
+			Archive file: ${ARCHIVE}
 			Run 'rm -rf ${BUILDROOT}' to delete the temporary build directory
+			Run 'corezfs install ${ARCHIVE}' to install
 		EOF
 		;;
 	install)
 		echo "Installing ZFS on Linux (ZoL) for CoreOS ($VERSION)"
 		[ "$EUID" -eq 0 ] || error_exit "Script must be run as root"
-		
-		[ -e "$ARCHIVE" ] || error_exit "$LINENO: Error can't find archive: $ARCHIVE"
+
+		[ ${2} ] && ARCHIVE="${2}"
 		tar -zxvf "$ARCHIVE" -C / || error_exit "$LINENO: Error extracting $ARCHIVE"
 		
-		systemctl daemon-reload \
-		&& systemctl start lib-modules.mount usr-local.mount \
+		cp /opt/corezfs/usr/lib64/systemd/system/zfs-overlay.service /etc/systemd/system/ \
+		&& systemctl daemon-reload \
+		&& systemctl enable --now zfs-overlay.service \
+		&& systemctl daemon-reload \
+		&& systemctl --preset-mode=enable preset-all \
 		|| error_exit "$LINENO: Error mounting overlays}"
-		
-		ldconfig || error_exit "$LINENO: Error reloading shared libraries"
-		depmod || error_exit "$LINENO: Error running depmod"
-		
-		(cd /opt/usr/local/etc/systemd/system; ls) | xargs systemctl preset \
-		|| error_exit "$LINENO: Error presetting systemd zfs units"
 
-		systemctl start zfs.target || error_exit "$LINENO: Error starting zfs.target systemd unit"
 		echo "Finished Installing ZFS on Linux (ZoL) for CoreOS ($VERSION)"
 		;;
 	*)
