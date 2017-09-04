@@ -1,26 +1,6 @@
 #!/bin/bash
 
 version="v0.1.1"
-
-SPLREPO="https://api.github.com/repos/zfsonlinux/spl/tarball"
-ZFSREPO="https://api.github.com/repos/zfsonlinux/zfs/tarball"
-
-function log_entry { echo "${1}" 1>&2; [ ! "${2}" ] || exit ${2}; }
-function log_error { log_entry "Error: ${1}" "${2}"; }
-function debug { log_entry "$(set -o posix ; set | sort)"; }
-
-[ "${EUID}" -eq 0 ] || log_error "$(basename ${0}) must be run as root" 1
-
-. /usr/share/coreos/release || log_error "failed to source /usr/share/coreos/release file" 1
-. /usr/share/coreos/update.conf || log_error "failed to source /usr/share/coreos/update.conf" 1
-
-DIR="$(pwd)"
-BUILDROOT="${DIR}/build"
-VERSION="${COREOS_RELEASE_BOARD}_${COREOS_RELEASE_VERSION}_${GROUP:=stable}"
-DEVREPO="https://${GROUP}.release.core-os.net/${COREOS_RELEASE_BOARD}/${COREOS_RELEASE_VERSION}/coreos_developer_container.bin.bz2"
-DEVENV="${DIR}/coreos_${VERSION}.bin"
-ARCHIVE="corezfs_${VERSION}.tar.gz"
-
 read -d '' help_message <<-EOF
 
 	$(basename ${0}) (${version})
@@ -34,6 +14,26 @@ read -d '' help_message <<-EOF
 
 	the install command will install it.
 EOF
+
+function log_entry { echo "${1}" 1>&2; [ ! "${2}" ] || exit ${2}; }
+function log_error { log_entry "Error: ${1}" "${2}"; }
+
+while getopts ":hv" flag; do
+	case ${flag} in
+		h ) log_entry "${help_message}" 0;;
+		v ) log_entry "${version}" 0;;
+		\? ) log_entry "Invalid option: -${OPTARG}" 1;;
+	esac
+done
+shift $((OPTIND-1))
+
+[ "${EUID}" -eq 0 ] || log_error "$(basename ${0}) must be run as root" 1
+
+. /usr/share/coreos/release || log_error "failed to source /usr/share/coreos/release file" 1
+. /usr/share/coreos/update.conf || log_error "failed to source /usr/share/coreos/update.conf" 1
+
+VERSION="${COREOS_RELEASE_BOARD}_${COREOS_RELEASE_VERSION}_${GROUP:=stable}"
+ARCHIVE="corezfs_${VERSION}.tar.gz"
 
 read -d '' build_script <<-'EOF'
 	#!/usr/bin/env bash
@@ -57,117 +57,139 @@ read -d '' build_script <<-'EOF'
 	emerge sys-devel/automake sys-devel/autoconf sys-devel/libtool \
 	|| log_error "$LINENO: Error installing development tools" 1
 
-	mkdir spl \
-	&& curl -L "$SPLREPO" \
-	| tar -zxv -C spl --strip-components=1 \
-	|| log_error "$LINENO: Error cloning spl repository" 1
-	(cd spl;
-	./autogen.sh || log_error "$LINENO: Error running autogen.sh for spl" 1
-	./configure || log_error "$LINENO: Error configuring spl" 1
-	make -j$(nproc) || log_error "$LINENO: Error making spl" 1)
+	trap "{ rm -rf /host/usr/local/src/{spl,zfs} \
+		|| log_error 'failed to delete /host/usr/local/src/{spl,zfs}'; }" EXIT
 
-	mkdir zfs \
-	&& curl -L "$ZFSREPO" \
-	| tar -zxv -C zfs --strip-components=1 \
-	|| log_error "$LINENO: Error cloning zfs repository" 1
-	(cd zfs;
-	./autogen.sh || log_error "$LINENO: Error running autogen.sh for zfs" 1
-	./configure \
-		--disable-sysvinit \
-	|| log_error "$LINENO: Error configuring zfs" 1
-	make -j$(nproc) || log_error "$LINENO: Error making zfs" 1)
-	ldconfig
-	depmod
+	mkdir -p /host/usr/local/src/{spl,zfs} \
+	|| log_error "failed to create /host/usr/local/src/spl directory"
+	(
+		cd /host/usr/local/src/spl
+		curl -L "${CZ_SPLREPO}" | tar -zxv --strip-components=1 \
+		|| log_error "$LINENO: Error fetching spl repository" 1
+		./autogen.sh || log_error "$LINENO: Error running autogen.sh for spl" 1
+		./configure || log_error "$LINENO: Error configuring spl" 1
+		make -j$(nproc) || log_error "$LINENO: Error making spl" 1
+		make DESTDIR=/host install || log_error "$LINENO: Error installing spl" 1
+	)
+	(
+		cd /host/usr/local/src/zfs
+		curl -L "${CZ_ZFSREPO}" | tar -zxv --strip-components=1 \
+		|| log_error "$LINENO: Error fetching zfs repository" 1
+		./autogen.sh || log_error "$LINENO: Error running autogen.sh for zfs" 1
+		./configure \
+			--disable-sysvinit \
+			--with-systemdunitdir=/usr/lib64/systemd/system \
+			--with-systemdpresetdir=/usr/lib64/systemd/system-preset \
+		|| log_error "$LINENO: Error configuring zfs" 1
+		make -j$(nproc) || log_error "$LINENO: Error making zfs" 1
+		make DESTDIR=/host install || log_error "$LINENO: Error installing zfs" 1
+	)
 
-	(cd spl; DESTDIR=/host/corezfs make install || log_error "$LINENO: Error installing spl" 1)
-	(cd zfs; DESTDIR=/host/corezfs make install || log_error "$LINENO: Error installing zfs" 1)
+	(
+		chroot /host
+		ldconfig -v
+		depmod
+		systemctl daemon-reload
+		systemctl preset-all
+	)
 EOF
 
 case "$1" in
 	build)
 		log_entry "Building ZFS on Linux (ZoL) for CoreOS ($VERSION)"
-		
-		log_entry "Creating build directory"
-		rm -rf "${BUILDROOT}" && mkdir -p "${BUILDROOT}"/corezfs/usr/{lib64/modules,local/lib64,sbin} \
-		&& ln -s lib64 "${BUILDROOT}/corezfs/lib" \
-		&& ln -s usr/lib64 "${BUILDROOT}/corezfs/lib64" \
-		&& ln -s lib64 "${BUILDROOT}/corezfs/usr/lib" \
-		&& ln -s lib64 "${BUILDROOT}/corezfs/usr/local/lib" \
-		&& ln -s usr/sbin "${BUILDROOT}/corezfs/sbin" \
-		|| log_error "$LINENO: Error creating directory ${BUILDROOT}" 1
-		
-		log_entry "Preparing build script"
-		echo "${build_script}" > "${BUILDROOT}/build-zfs.sh" \
-		&& chmod +x "${BUILDROOT}/build-zfs.sh" \
-		|| log_error "$LINENO: Error creating build script" 1
-		
-		if [ ! -r "${DEVENV}" ]; then
-			log_entry "Refreshing CoreOS signing key"
-			gpg2 --keyserver pgp.mit.edu --recv-keys 50E0885593D2DCB4 \
-			|| log_error "Failed to update signing key" 1
 
-			if [ ! -r "${DEVENV}.bz2" ]; then
-				log_entry "Downloading development container"
-				curl -L "${DEVREPO}" > "${DEVENV}.bz2" \
-				|| log_error "Failed to download development container" 1
+		log_entry "Creating build directory"
+		mkdir -p \
+			${CZ_BUILD_DIR:=${2:-"/opt/corezfs_build"}} \
+			${CZ_OVERLAY_DIR:=${CZ_BUILD_DIR}/overlay} \
+		|| log_error "failed to create corezfs build directories" 1
+		
+		CZ_BUILD_DIR=$(cd ${CZ_BUILD_DIR}; pwd)
+		CZ_OVERLAY_DIR=$(cd ${CZ_OVERLAY_DIR}; pwd)
+
+		log_entry "Preparing build script"
+		echo "${build_script}" > "${CZ_OVERLAY_DIR}/build-zfs.sh" \
+		&& chmod +x "${CZ_OVERLAY_DIR}/build-zfs.sh" \
+		|| log_error "failed to create build script" 1
+		
+		DEVENV="coreos_${VERSION}.bin"
+		(
+			cd ${CZ_BUILD_DIR}
+			if [ ! -r "${DEVENV}" ]; then
+				log_entry "Refreshing CoreOS signing key"
+				gpg2 --keyserver pgp.mit.edu --recv-keys 50E0885593D2DCB4 \
+				|| log_error "Failed to update signing key" 1
+
+				if [ ! -r "${DEVENV}.bz2" ]; then
+					log_entry "Downloading development container"
+					DEVREPO="https://${GROUP}.release.core-os.net/${COREOS_RELEASE_BOARD}/${COREOS_RELEASE_VERSION}/coreos_developer_container.bin.bz2"
+					curl -L "${DEVREPO}" > "${DEVENV}.bz2" \
+					|| log_error "Failed to download development container" 1
+				fi
+
+				log_entry "Verifying development container signature"
+				(gpg2 --verify <(log_entry "Downloading development container signature"
+					curl -L ${DEVREPO}.sig \
+					|| log_error "Failed to download development container signature" 1) "${DEVENV}.bz2") \
+				|| log_error "Development container signature verification failed for ${DEVENV}.bz2" 1
+			
+				log_entry "Decompressing development container"
+				bunzip2 -fv "${DEVENV}.bz2" > "${DEVENV}" \
+				|| log_error "Failed to decompress development container" 1
 			fi
 
-			log_entry "Verifying development container signature"
-			(gpg2 --verify <(log_entry "Downloading development container signature"
-				curl -L ${DEVREPO}.sig \
-				|| log_error "Failed to download development container signature" 1) "${DEVENV}.bz2") \
-			|| log_error "Development container signature verification failed for ${DEVENV}.bz2" 1
-		
-			log_entry "Decompressing development container"
-			bunzip2 -fv "${DEVENV}.bz2" > "${DEVENV}" \
-			|| log_error "Failed to decompress development container" 1
-		fi
+			log_entry "Creating swap file" # build fails sometimes with only 1GB RAM
+			fallocate -l 1024m swap \
+			&& chmod 600 swap \
+			&& mkswap swap \
+			&& swapon swap \
+			&& trap "{
+				swapoff ${CZ_BUILD_DIR}/swap \
+				&& rm ${CZ_BUILD_DIR}/swap \
+				|| log_error 'Failed to deactivate swap'
+			}" EXIT \
+			|| log_error "Error activating swap" 1			
+		)
 
-		log_entry "Creating swap file" # build fails sometimes with only 1GB RAM
-		fallocate -l 1024m ${DIR}/swap \
-		&& chmod 600 ${DIR}/swap \
-		&& mkswap ${DIR}/swap \
-		&& swapon ${DIR}/swap \
-		&& trap "{ swapoff ${DIR}/swap && rm ${DIR}/swap \
-			|| log_error 'Failed to deactivate swap'; }" EXIT \
-		|| log_error "Error activating swap" 1
+		# log_entry "Creating Systemd Unit Files"
+		# cat > ${CZ_OVERLAY_DIR}/usr/lib64/systemd/system/zfs-overlay.service <<-EOF
+		# 	[Unit]
+		# 	Description=CoreZFS usr overlay
+		# 	Before=local-fs.target
+		# 	ConditionPathExists=/opt/corezfs/usr
+
+		# 	[Service]
+		# 	Type=oneshot
+		# 	ExecStart=/usr/bin/mount -t overlay overlay -o lowerdir=/usr:/opt/corezfs/usr /usr
+
+		# 	[Install]
+		# 	WantedBy=local-fs.target
+		# EOF
+
+		# cat > ${CZ_OVERLAY_DIR}/usr/lib64/systemd/system-preset/30-corezfs.preset <<-EOF
+		# 	enable zfs-overlay.service
+		# EOF
 
 		log_entry "Launching development container"
 		systemd-nspawn \
-			--image="${DEVENV}" \
+			--image="${CZ_BUILD_DIR}/${DEVENV}" \
 			--ephemeral \
-			--setenv="SPLREPO=${SPLREPO}" \
-			--setenv="ZFSREPO=${ZFSREPO}" \
-			--overlay="/lib/modules:${BUILDROOT}/corezfs/usr/lib64/modules:/lib/modules" \
-			--bind="${BUILDROOT}:/host" \
+			--setenv="CZ_SPLREPO=${CZ_SPLREPO:=https://api.github.com/repos/zfsonlinux/spl/tarball}" \
+			--setenv="CZ_ZFSREPO=${CZ_ZFSREPO:=https://api.github.com/repos/zfsonlinux/zfs/tarball}" \
+			--overlay="/lib/modules:${CZ_OVERLAY_DIR}/usr/lib64/modules:/usr/lib64/modules" \
+			--overlay="/:${CZ_OVERLAY_DIR}:/host" \
 			--as-pid2 \
-			/host/build-zfs.sh \
+			bash --login \
 			|| log_error "$LINENO: Error running development container" 1
 		
-		log_entry "Creating Systemd Unit Files"
-		cat > ${BUILDROOT}/corezfs/usr/lib64/systemd/system/zfs-overlay.service <<-EOF
-			[Unit]
-			Description=CoreZFS usr overlay
-			After=usr.mount
-			Before=local-fs.target
-			ConditionPathExists=/opt/corezfs/usr
-
-			[Service]
-			Type=oneshot
-			ExecStart=/usr/bin/mount -t overlay overlay -o lowerdir=/usr:/opt/corezfs/usr /usr
-
-			[Install]
-			WantedBy=usr.mount
-		EOF
-		
 		log_entry "Creating ${ARCHIVE} tarball"
-		(tar -zcvf "${ARCHIVE}" -C "$BUILDROOT" --xform=s,^,opt/, corezfs/usr) \
+		(tar -zcvf "${ARCHIVE}" -C "${CZ_OVERLAY_DIR}" --xform=s,^,opt/corezfs/, usr) \
 		|| log_entry "Failed to create tarball" 1
 
 		cat <<-EOF
 			Finished Building ZFS on Linux (ZoL) for CoreOS ($VERSION)
 			Archive file: ${ARCHIVE}
-			Run 'rm -rf ${BUILDROOT}' to delete the temporary build directory
+			Run 'rm -rf ${CZ_BUILD_DIR}' to delete the temporary build directory
 			Run 'corezfs install ${ARCHIVE}' to install
 		EOF
 		;;
@@ -181,6 +203,7 @@ case "$1" in
 		cp /opt/corezfs/usr/lib64/systemd/system/zfs-overlay.service /etc/systemd/system/ \
 		&& systemctl daemon-reload \
 		&& systemctl enable --now zfs-overlay.service \
+		&& ldconfig -v \
 		&& systemctl daemon-reload \
 		&& systemctl --preset-mode=enable preset-all \
 		|| error_exit "$LINENO: Error mounting overlays}"
