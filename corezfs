@@ -1,22 +1,32 @@
 #!/bin/bash
 
 version="v0.1.1"
+
+. /usr/share/coreos/release || log_error "failed to source /usr/share/coreos/release file" 1
+. /usr/share/coreos/update.conf || log_error "failed to source /usr/share/coreos/update.conf" 1
+
+VERSION="${COREOS_RELEASE_BOARD}_${COREOS_RELEASE_VERSION}_${GROUP:=stable}"
+ARCHIVE="corezfs_${VERSION}.tar.gz"
+
 read -d '' help_message <<-EOF
 
 	$(basename ${0}) (${version})
 	    Bash script to build ZFS on Linux (ZoL) on CoreOS
+	    https://github.com/varasys/corezfs
 	
 	Usage:
-	    $(basename ${0}) build
-		$(basename ${0}) install
-	
-	the build command will build it.
+	    $(basename ${0}) build [archive_file]
+	    $(basename ${0}) install [archive_file]
 
-	the install command will install it.
+	The default archive_file is "./${ARCHIVE}".
+
+	The build command will build zfs and create the archive file.
+
+	The install command will install the archive to the currently running system.
 EOF
 
-function log_entry { echo "${1}" 1>&2; [ ! "${2}" ] || exit ${2}; }
-function log_error { log_entry "Error: ${1}" "${2}"; }
+function log_entry { echo ${1} 1>&2; [ ! ${2} ] || exit ${2}; }
+function log_error { log_entry "Error: ${1}" ${2}; }
 
 while getopts ":hv" flag; do
 	case ${flag} in
@@ -29,16 +39,10 @@ shift $((OPTIND-1))
 
 [ "${EUID}" -eq 0 ] || log_error "$(basename ${0}) must be run as root" 1
 
-. /usr/share/coreos/release || log_error "failed to source /usr/share/coreos/release file" 1
-. /usr/share/coreos/update.conf || log_error "failed to source /usr/share/coreos/update.conf" 1
-
-VERSION="${COREOS_RELEASE_BOARD}_${COREOS_RELEASE_VERSION}_${GROUP:=stable}"
-ARCHIVE="corezfs_${VERSION}.tar.gz"
-
 read -d '' build_script <<-'EOF'
 	#!/usr/bin/env bash
 
-	function log_entry { echo "${1}" 1>&2; [ ! "${2}" ] || exit ${2}; }
+	function log_entry { echo "${1}" 1>&2; [ ! "${2}" ] || bash --login; }
 	function log_error { log_entry "Error: ${1}" "${2}"; }
 	
 	mkdir -p /usr/local/src
@@ -70,7 +74,7 @@ read -d '' build_script <<-'EOF'
 		./configure || log_error "$LINENO: Error configuring spl" 1
 		make -j$(nproc) || log_error "$LINENO: Error making spl" 1
 		make DESTDIR=/host install || log_error "$LINENO: Error installing spl" 1
-	)
+	) || exit 1
 	(
 		cd /host/usr/local/src/zfs
 		curl -L "${CZ_ZFSREPO}" | tar -zxv --strip-components=1 \
@@ -78,20 +82,38 @@ read -d '' build_script <<-'EOF'
 		./autogen.sh || log_error "$LINENO: Error running autogen.sh for zfs" 1
 		./configure \
 			--disable-sysvinit \
-			--with-systemdunitdir=/usr/lib64/systemd/system \
-			--with-systemdpresetdir=/usr/lib64/systemd/system-preset \
 		|| log_error "$LINENO: Error configuring zfs" 1
 		make -j$(nproc) || log_error "$LINENO: Error making zfs" 1
 		make DESTDIR=/host install || log_error "$LINENO: Error installing zfs" 1
-	)
+	) || exit 1
 
 	(
 		chroot /host
 		ldconfig -v
 		depmod
+
+		log_entry "Creating Systemd Unit Files"
+		cat > /usr/lib64/systemd/system/zfs-overlay.service <<-EOF2
+			[Unit]
+			Description=CoreZFS usr overlay
+			Before=local-fs.target
+			ConditionPathExists=/opt/corezfs/usr
+
+			[Service]
+			Type=oneshot
+			ExecStart=/usr/bin/mount -t overlay overlay -o lowerdir=/usr:/opt/corezfs/usr /usr
+
+			[Install]
+			WantedBy=local-fs.target
+		EOF2
+
+		cat > /usr/lib64/systemd/system-preset/30-corezfs.preset <<-EOF2
+			enable zfs-overlay.service
+		EOF2
+
 		systemctl daemon-reload
 		systemctl preset-all
-	)
+	) || exit 1
 EOF
 
 case "$1" in
@@ -137,38 +159,19 @@ case "$1" in
 				bunzip2 -fv "${DEVENV}.bz2" > "${DEVENV}" \
 				|| log_error "Failed to decompress development container" 1
 			fi
+		) || exit 1
 
-			log_entry "Creating swap file" # build fails sometimes with only 1GB RAM
-			fallocate -l 1024m swap \
-			&& chmod 600 swap \
-			&& mkswap swap \
-			&& swapon swap \
-			&& trap "{
-				swapoff ${CZ_BUILD_DIR}/swap \
-				&& rm ${CZ_BUILD_DIR}/swap \
-				|| log_error 'Failed to deactivate swap'
-			}" EXIT \
-			|| log_error "Error activating swap" 1			
-		)
-
-		# log_entry "Creating Systemd Unit Files"
-		# cat > ${CZ_OVERLAY_DIR}/usr/lib64/systemd/system/zfs-overlay.service <<-EOF
-		# 	[Unit]
-		# 	Description=CoreZFS usr overlay
-		# 	Before=local-fs.target
-		# 	ConditionPathExists=/opt/corezfs/usr
-
-		# 	[Service]
-		# 	Type=oneshot
-		# 	ExecStart=/usr/bin/mount -t overlay overlay -o lowerdir=/usr:/opt/corezfs/usr /usr
-
-		# 	[Install]
-		# 	WantedBy=local-fs.target
-		# EOF
-
-		# cat > ${CZ_OVERLAY_DIR}/usr/lib64/systemd/system-preset/30-corezfs.preset <<-EOF
-		# 	enable zfs-overlay.service
-		# EOF
+		log_entry "Creating swap file" # build fails sometimes with only 1GB RAM
+		fallocate -l 1024m ${CZ_BUILD_DIR}/swap \
+		&& chmod 600 ${CZ_BUILD_DIR}/swap \
+		&& mkswap ${CZ_BUILD_DIR}/swap \
+		&& swapon ${CZ_BUILD_DIR}/swap \
+		&& trap "{
+			swapoff ${CZ_BUILD_DIR}/swap \
+			&& rm ${CZ_BUILD_DIR}/swap \
+			|| log_error 'Failed to deactivate swap'
+		}" EXIT \
+		|| log_error "Error activating swap" 1
 
 		log_entry "Launching development container"
 		systemd-nspawn \
@@ -176,10 +179,11 @@ case "$1" in
 			--ephemeral \
 			--setenv="CZ_SPLREPO=${CZ_SPLREPO:=https://api.github.com/repos/zfsonlinux/spl/tarball}" \
 			--setenv="CZ_ZFSREPO=${CZ_ZFSREPO:=https://api.github.com/repos/zfsonlinux/zfs/tarball}" \
-			--overlay="/lib/modules:${CZ_OVERLAY_DIR}/usr/lib64/modules:/usr/lib64/modules" \
+			--overlay="/usr/lib64/modules::/lib/modules" \
 			--overlay="/:${CZ_OVERLAY_DIR}:/host" \
+			--overlay="/usr:${CZ_OVERLAY_DIR}/usr:/host/usr" \
 			--as-pid2 \
-			bash --login \
+			/host/build-zfs.sh \
 			|| log_error "$LINENO: Error running development container" 1
 		
 		log_entry "Creating ${ARCHIVE} tarball"
@@ -190,51 +194,26 @@ case "$1" in
 			Finished Building ZFS on Linux (ZoL) for CoreOS ($VERSION)
 			Archive file: ${ARCHIVE}
 			Run 'rm -rf ${CZ_BUILD_DIR}' to delete the temporary build directory
-			Run 'corezfs install ${ARCHIVE}' to install
+			Run 'corezfs install' to install
 		EOF
 		;;
 	install)
 		echo "Installing ZFS on Linux (ZoL) for CoreOS ($VERSION)"
-		[ "$EUID" -eq 0 ] || error_exit "Script must be run as root"
 
-		[ ${2} ] && ARCHIVE="${2}"
-		tar -zxvf "$ARCHIVE" -C / || error_exit "$LINENO: Error extracting $ARCHIVE"
+		[ ${2} ] && ARCHIVE=${2}
+		tar -zxvf ${ARCHIVE} -C / || error_exit "$LINENO: Error extracting $ARCHIVE"
 		
 		cp /opt/corezfs/usr/lib64/systemd/system/zfs-overlay.service /etc/systemd/system/ \
 		&& systemctl daemon-reload \
 		&& systemctl enable --now zfs-overlay.service \
 		&& ldconfig -v \
 		&& systemctl daemon-reload \
-		&& systemctl --preset-mode=enable preset-all \
+		&& systemctl preset-all \
 		|| error_exit "$LINENO: Error mounting overlays}"
 
 		echo "Finished Installing ZFS on Linux (ZoL) for CoreOS ($VERSION)"
 		;;
 	*)
-		cat <<-"EOF"
-		# corezfs - Download, build, and install ZFS on Linux (ZoL) for CoreOS
-
-		This script is available from https://github.com/varasys/corezfs and should be
-		run on a fresh CoreOS install. It should work for all CoreOS architectures and
-		versions and all CoreOS updated channels (ie. stable, beta and alpha).
-
-		## Usage:
-		    sudo ./corezfs build [archive_file]
-				Build zfs and create an archive file, optionally specifying the
-				file name, which can be used to transfer the build artifacts to
-				another computer.
-	   
-		    sudo ./corezfs install [archive_file]
-				Install zfs (after building it) using the optional archive_file.
-				If no archive_file is specified, the default archive-file name
-				based on the currently running CoreOS version will be used. The form
-				of the archive name is:
-				    corezfs-<architucture>-<version>-<update_channel>.tar.gz
-		
-		Full installation is seperated into two steps, build then install, so the
-		script may be used to either build and install directly onto a single machine,
-		or to build on a development machine, and then install on multiple target
-		machines.
-		EOF
+		log_entry "${help_message}" 1
 		;;
 esac
