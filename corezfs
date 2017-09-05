@@ -45,6 +45,8 @@ read -d '' build_script <<-'EOF'
 	function log_entry { echo "${1}" 1>&2; [ ! "${2}" ] || bash --login; }
 	function log_error { log_entry "Error: ${1}" "${2}"; }
 	
+	rm /lib/modules && ln -s /host/usr/lib64/modules /lib/modules
+
 	mkdir -p /usr/local/src
 	cd /usr/local/src
 
@@ -87,33 +89,24 @@ read -d '' build_script <<-'EOF'
 		make DESTDIR=/host install || log_error "$LINENO: Error installing zfs" 1
 	) || exit 1
 
-	(
-		chroot /host
-		ldconfig -v
-		depmod
+	log_entry "Creating Systemd Unit Files"
+	cat > /host/usr/lib64/systemd/system/zfs-overlay.service <<-EOF2
+		[Unit]
+		Description=CoreZFS usr overlay
+		Before=local-fs.target
+		ConditionPathExists=/opt/corezfs/usr
 
-		log_entry "Creating Systemd Unit Files"
-		cat > /usr/lib64/systemd/system/zfs-overlay.service <<-EOF2
-			[Unit]
-			Description=CoreZFS usr overlay
-			Before=local-fs.target
-			ConditionPathExists=/opt/corezfs/usr
+		[Service]
+		Type=oneshot
+		ExecStart=/usr/bin/mount -t overlay overlay -o lowerdir=/usr:/opt/corezfs/usr /usr
 
-			[Service]
-			Type=oneshot
-			ExecStart=/usr/bin/mount -t overlay overlay -o lowerdir=/usr:/opt/corezfs/usr /usr
+		[Install]
+		WantedBy=local-fs.target
+	EOF2
 
-			[Install]
-			WantedBy=local-fs.target
-		EOF2
-
-		cat > /usr/lib64/systemd/system-preset/30-corezfs.preset <<-EOF2
-			enable zfs-overlay.service
-		EOF2
-
-		systemctl daemon-reload
-		systemctl preset-all
-	) || exit 1
+	cat > /host/usr/lib64/systemd/system-preset/30-corezfs.preset <<-EOF2
+		enable zfs-overlay.service
+	EOF2
 EOF
 
 case "$1" in
@@ -179,7 +172,6 @@ case "$1" in
 			--ephemeral \
 			--setenv="CZ_SPLREPO=${CZ_SPLREPO:=https://api.github.com/repos/zfsonlinux/spl/tarball}" \
 			--setenv="CZ_ZFSREPO=${CZ_ZFSREPO:=https://api.github.com/repos/zfsonlinux/zfs/tarball}" \
-			--overlay="/usr/lib64/modules::/lib/modules" \
 			--overlay="/:${CZ_OVERLAY_DIR}:/host" \
 			--overlay="/usr:${CZ_OVERLAY_DIR}/usr:/host/usr" \
 			--as-pid2 \
@@ -204,14 +196,13 @@ case "$1" in
 		tar -zxvf ${ARCHIVE} -C / || error_exit "$LINENO: Error extracting $ARCHIVE"
 		
 		cp /opt/corezfs/usr/lib64/systemd/system/zfs-overlay.service /etc/systemd/system/ \
-		&& systemctl daemon-reload \
-		&& systemctl enable --now zfs-overlay.service \
-		&& ldconfig -v \
-		&& systemctl daemon-reload \
-		&& systemctl preset-all \
-		|| error_exit "$LINENO: Error mounting overlays}"
+		|| log_error "Error copying zfs-overlay.service unit file" 1
+		systemctl enable --now zfs-overlay.service \
+		|| log_error "Error enabling zfs-overlay.service unit file" 1
+		systemctl preset-all \
+		|| log_error "Error presetting zfs systemd services}"
 
-		echo "Finished Installing ZFS on Linux (ZoL) for CoreOS ($VERSION)"
+		log_entry "Finished Installing ZFS on Linux (ZoL) for CoreOS ($VERSION)" 0
 		;;
 	*)
 		log_entry "${help_message}" 1
