@@ -7,10 +7,8 @@ die() { yell "FATAL $*"; exit 111; }
 try() { yell ${1}; shift; "$@" || die "ERROR executing: $*"; }
 
 
-try "sourcing /usr/share/coreos/reloase" \
-	. /usr/share/coreos/release
-try "sourcing /usr/share/coreos/update.conf" \
-	. /usr/share/coreos/update.conf
+. /usr/share/coreos/release
+. /usr/share/coreos/update.conf
 
 VERSION="${COREOS_RELEASE_BOARD}_${COREOS_RELEASE_VERSION}_${GROUP:=stable}"
 ARCHIVE="corezfs_${VERSION}.tar.gz"
@@ -18,39 +16,37 @@ ARCHIVE="corezfs_${VERSION}.tar.gz"
 read -d '' help_message <<-EOF
 
 	corezfs (${version}) https://github.com/varasys/corezfs
-	    Bash script to build ZFS on Linux (ZoL) on CoreOS
+	
+	Bash script to build ZFS on Linux (ZoL) on CoreOS
 	
 	Usage:
 	    corezfs build [archive_file]
 	    corezfs install [archive_file]
-		corezfs -h | -v
+	    corezfs -h | -v
 
 	Options:
 	    -h ) echo this help file to stdout
-	    -v ) echo corezfs and CoreOS versions to stdout	
+	    -v ) echo corezfs version to stdout	
 
 	The build command will build zfs and create the archive file which is an
-	overlay for the /usr filesystem. The default archive_file is
+	overlay for the "/usr" filesystem. The default archive_file is
 	"./${ARCHIVE}".
 	
 	The archive file can be used to install the zfs binaries on other systems
 	instead of building it each time.
 
-	The install command extracts the archive file to /opt/corezfs, installs
+	The install command extracts the archive file to "/opt/corezfs", installs
 	and enables a "zfs-overlay.service" systemd service which overlays
-	"/opt/corezfs/usr" over the "/usr" directory, and runs "systemctl preset-all"
-	to enable the zfs services.
+	"/opt/corezfs/usr" over the "/usr" directory, runs "systemctl preset-all"
+	to enable the zfs services, runs "ldconfig", and "modprobe zfs".
 
 	This is meant to be built and installed on a clean CoreOS instance.
 EOF
 
 while getopts ":hv" flag; do
 	case ${flag} in
-		h ) echo ${help_message}; exit 0;;
-		v )
-			echo "corezfs ${version}"
-			echo "CoreOS ${VERSION}"
-			;;
+		h ) echo "${help_message}"; exit 0;;
+		v ) echo "${version}"; exit 0;;
 		\? ) die "Invalid option: -${OPTARG}";;
 	esac
 done
@@ -65,9 +61,6 @@ read -d '' build_script <<-'EOF'
 	die() { yell "FATAL $*"; exit 111; }
 	try() { mesg=${1}; yell ${mesg}; shift; "$@" || die "ERROR executing: $*"; }
 	
-	try "linking /lib/modules to /host/usr/lib64/modules" \
-		ln -fs /host/usr/lib64/modules /lib/modules
-
 	try "creating /usr/local/src" \
 		mkdir -p /usr/local/src && cd /usr/local/src
 
@@ -92,7 +85,7 @@ read -d '' build_script <<-'EOF'
 	try "emenging development tools" \
 		emerge sys-devel/automake sys-devel/autoconf sys-devel/libtool
 
-	trap "{ rm -rf /host/usr/local/src/{spl,zfs}; }" EXIT
+	trap "{ rm -rf /host/usr/local/src; }" EXIT
 	try "creating src directories" \
 		mkdir -p /host/usr/local/src/{spl,zfs}
 	
@@ -102,8 +95,8 @@ read -d '' build_script <<-'EOF'
 		try "running autogen.sh for spl" ./autogen.sh
 		try "configuring spl" ./configure
 		try "making spl" make -j$(nproc)
-		try "installing spl" make DESTDIR=/host install
-	) || exit 1
+		try "installing spl" make DESTDIR=/host INSTALL_MOD_PATH=/host install
+	) || exit $?
 	(
 		cd /host/usr/local/src/zfs
 		try "fetching zfs source code" curl -L "${CZ_ZFSREPO}" | tar -zxv --strip-components=1
@@ -111,9 +104,10 @@ read -d '' build_script <<-'EOF'
 		try "configuring zfs" ./configure --disable-sysvinit
 		try "making zfs" make -j$(nproc)
 		try "installing zfs" make DESTDIR=/host install
-	) || exit 1
+	) || exit $?
 	
-	try "running depmod" depmod -b /host
+	try "running depmod" chroot /host depmod
+	try "running ldconfig" chroot /host ldconfig -v
 
 	yell "Creating Systemd Unit Files"
 	cat > /host/usr/lib64/systemd/system/zfs-overlay.service <<-EOF2
@@ -132,6 +126,7 @@ read -d '' build_script <<-'EOF'
 	cat > /host/usr/lib64/systemd/system-preset/30-corezfs.preset <<-EOF2
 		enable zfs-overlay.service
 	EOF2
+	bash --login
 EOF
 
 case "$1" in
@@ -163,35 +158,44 @@ case "$1" in
 				gpg2 --verify <(try "downloading signature" curl -L "${DEVREPO}.sig") "${CZ_BUILD_DIR}/${DEVENV}.bz2"
 
 			try "decompressing development container (this may take awhile)" \
-				bunzip2 -fv "${DEVENV}.bz2" > "${CZ_BUILD_DIR}/${DEVENV}"
+				bunzip2 -fv "${CZ_BUILD_DIR}/${DEVENV}.bz2" > "${CZ_BUILD_DIR}/${DEVENV}"
 		fi
 
-		try "allocating swap file" fallocate -l 1024m ${CZ_BUILD_DIR}/swap
-		try "setting swap file permissions" chmod 600 ${CZ_BUILD_DIR}/swap
-		try "initializing swap file" mkswap ${CZ_BUILD_DIR}/swap
-		try "activating swap" swapon ${CZ_BUILD_DIR}/swap
-		trap "{ swapoff ${CZ_BUILD_DIR}/swap && rm ${CZ_BUILD_DIR}/swap; }" EXIT
+		(
+			cd "${CZ_BUILD_DIR}"
+			try "allocating swap file" fallocate -l 1024m swap
+			try "setting swap file permissions" chmod 600 swap
+			try "initializing swap file" mkswap swap
+			try "activating swap" swapon swap
+			trap "{ swapoff ${CZ_BUILD_DIR}/swap && rm ${CZ_BUILD_DIR}/swap; }" EXIT
 
-		try "launching development container" \
-			systemd-nspawn \
-				--image="${CZ_BUILD_DIR}/${DEVENV}" \
-				--ephemeral \
-				--setenv="CZ_SPLREPO=${CZ_SPLREPO:=https://api.github.com/repos/zfsonlinux/spl/tarball}" \
-				--setenv="CZ_ZFSREPO=${CZ_ZFSREPO:=https://api.github.com/repos/zfsonlinux/zfs/tarball}" \
-				--overlay="/:${CZ_OVERLAY_DIR}/opt/corezfs:/host" \
-				--overlay="/usr:${CZ_OVERLAY_DIR}/opt/corezfs/usr:/host/usr" \
-				--as-pid2 \
-				/host/build-zfs.sh
+			try "launching development container" \
+				systemd-nspawn \
+					--image="${DEVENV}" \
+					--ephemeral \
+					--setenv="CZ_SPLREPO=${CZ_SPLREPO:=https://api.github.com/repos/zfsonlinux/spl/tarball}" \
+					--setenv="CZ_ZFSREPO=${CZ_ZFSREPO:=https://api.github.com/repos/zfsonlinux/zfs/tarball}" \
+					--overlay="/lib/modules::/lib/modules" \
+					--overlay="/:${CZ_OVERLAY_DIR}/opt/corezfs:/host" \
+					--overlay="/usr:${CZ_OVERLAY_DIR}/opt/corezfs/usr:/host/usr" \
+					--as-pid2 \
+					/host/build-zfs.sh			
+		) || exit $?
+
 		
-		try "Creating ${ARCHIVE} tarball" \
+		try "creating ${ARCHIVE} tarball" \
 			tar -zcvf "${ARCHIVE}" -C "${CZ_OVERLAY_DIR}" opt/corezfs/usr
 
-		cat <<-EOF
+		try "cleaning up temporary build directories" \
+			rm -rf "${CZ_BUILD_DIR}" "${CZ_OVERLAY_DIR}"
+
+		cat >&2 <<-EOF
 			
 			Finished Building ZFS on Linux (ZoL) for CoreOS ($VERSION)
+			
 			Archive file: ${ARCHIVE}
-			Run 'rm -rf ${CZ_BUILD_DIR}' to delete the temporary build directory
-			Run 'corezfs install' to install
+			
+			Run "corezfs install ${ARCHIVE}" to install
 		EOF
 		;;
 	install)
@@ -205,9 +209,14 @@ case "$1" in
 		try "enabling zfs-overlay.service" \
 			systemctl enable --now zfs-overlay.service
 		try "presetting systemd units" \
-			systemctl preset-all
+			systemctl preset-all --now
+		try "running ldconfig" \
+			ldconfig -v
 
-		yell "\nFinished Installing ZFS on Linux (ZoL) for CoreOS ($VERSION)"
+		cat >&2 <<-EOF
+			
+			Finished Installing ZFS on Linux (ZoL) for CoreOS ($VERSION)
+		EOF
 		;;
 	*)
 		die "unknown sub-command \"${1}\" (run \"$(basename ${0}) -h\" for help)"
