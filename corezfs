@@ -124,7 +124,7 @@ read -d '' build_script <<-'EOF'
 		enable zfs-overlay.service
 	EOF2
 
-	[ ${debug} ] && try "Pre Contianer Exit login shell"
+	[ ${debug} ] && try "Pre Contianer Exit login shell" bash --login
 EOF
 
 case "$1" in
@@ -181,7 +181,7 @@ case "$1" in
 					/host/opt/corezfs_build/overlay/opt/corezfs/build-zfs.sh
 		) || exit $?
 
-		[ ${debug} ] && try "pre-archive login shell"
+		[ ${debug} ] && try "pre-archive login shell" bash --login
 		[ "${2}" ] && ARCHIVE=${2}
 		try "creating ${ARCHIVE} tarball" \
 			tar -zcvf "${ARCHIVE}" -C "${CZ_OVERLAY_DIR}" opt/corezfs/usr
