@@ -62,8 +62,6 @@ read -d '' build_script <<-'EOF'
 	die() { yell "FATAL $*"; exit 111; }
 	try() { mesg=${1}; yell ${mesg}; shift; "$@" || die "ERROR executing: $*"; }
 
-	[ ${debug} ] && try "starting pre-script login shell" bash --login
-
 	try "creating /usr/local/src" \
 		mkdir -p /usr/local/src && cd /usr/local/src
 
@@ -125,6 +123,8 @@ read -d '' build_script <<-'EOF'
 	cat > /host/usr/lib64/systemd/system-preset/30-corezfs.preset <<-EOF2
 		enable zfs-overlay.service
 	EOF2
+
+	[ ${debug} ] && try "Pre Contianer Exit login shell"
 EOF
 
 case "$1" in
@@ -176,12 +176,12 @@ case "$1" in
 					--setenv="CZ_ZFSREPO=${CZ_ZFSREPO:=https://api.github.com/repos/zfsonlinux/zfs/tarball}" \
 					--overlay="/::/host" \
 					--overlay="/usr:${CZ_OVERLAY_DIR}/opt/corezfs/usr:/host/usr" \
-					--overlay="/usr/lib64/modules:${CZ_OVERLAY_DIR}/opt/corezfs/usr/lib64/modules:/host/usr/lib64/modules" \
-					--overlay="/lib/modules::/lib/modules" \
+					--overlay="/usr/lib64/modules::/usr/lib64/modules" \
 					--as-pid2 \
 					/host/opt/corezfs_build/overlay/opt/corezfs/build-zfs.sh
 		) || exit $?
 
+		[ ${debug} ] && try "pre-archive login shell"
 		[ "${2}" ] && ARCHIVE=${2}
 		try "creating ${ARCHIVE} tarball" \
 			tar -zcvf "${ARCHIVE}" -C "${CZ_OVERLAY_DIR}" opt/corezfs/usr
