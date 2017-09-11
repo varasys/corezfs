@@ -2,8 +2,10 @@
 
 version="v0.1.1"
 
+zfs_version="0.7.1"
+
 yell() { echo "$(basename $0): $*" >&2; }
-die() { yell "FATAL $*"; exit 111; }
+die() { yell "FATAL $*"; [ ${debug} ] && bash --login || exit 111; }
 try() { yell ${1}; shift; "$@" || die "ERROR executing: $*"; }
 
 
@@ -41,11 +43,12 @@ read -d '' help_message <<-EOF
 	to enable the zfs services, runs "ldconfig", and "modprobe zfs".
 
 	This is meant to be built and installed on a clean CoreOS instance.
+
 EOF
 
 while getopts ":dhv" flag; do
 	case ${flag} in
-		d ) yell "running in debug mode"; debug="true";;
+		d )	yell "running in debug mode"; debug="true";;
 		h ) echo "${help_message}"; exit 0;;
 		v ) echo "${version}"; exit 0;;
 		\? ) die "Invalid option: -${OPTARG}";;
@@ -55,20 +58,18 @@ shift $((OPTIND-1))
 
 [ ${EUID} -eq 0 ] || die "must be run as root user"
 
+
 read -d '' build_script <<-'EOF'
 	#!/usr/bin/env bash
 
 	yell() { echo "$(basename $0): $*" >&2; }
-	die() { yell "FATAL $*"; exit 111; }
+	die() { yell "FATAL $*"; [ ${debug} ] && bash --login || exit 111; }
 	try() { mesg=${1}; yell ${mesg}; shift; "$@" || die "ERROR executing: $*"; }
-
-	try "creating /usr/local/src" \
-		mkdir -p /usr/local/src && cd /usr/local/src
 
 	try "sourcing /usr/share/coreos/release" \
 		. /usr/share/coreos/release
 
-	try "emerging gitclone" \
+	try "emerging gitclone"
 		emerge-gitclone
 
 	try "checking out coreos-overlay" \
@@ -83,31 +84,56 @@ read -d '' build_script <<-'EOF'
 	try "preparing modules" \
 		make -C /usr/src/linux modules_prepare
 
-	try "emenging development tools" \
-		emerge sys-devel/automake sys-devel/autoconf sys-devel/libtool
+	try "creating /usr/local/portage/sys-fs/{zfs,spl}" \
+		mkdir -p /usr/local/portage/{metadata,profiles,sys-fs/{zfs,spl}}
 
-	try "creating src directories" \
-		mkdir -p /host/usr/local/src/{spl,zfs}
-	
-	(
-		cd /host/usr/local/src/spl
-		try "fetching spl source code" curl -L "${CZ_SPLREPO}" | tar -zxv --strip-components=1
-		try "running autogen.sh for spl" ./autogen.sh
-		try "configuring spl" ./configure
-		try "making spl" make -j$(nproc)
-		try "installing spl" make DESTDIR=/host install
-	) || exit $?
-	(
-		cd /host/usr/local/src/zfs
-		try "fetching zfs source code" curl -L "${CZ_ZFSREPO}" | tar -zxv --strip-components=1
-		try "running autogen.sh for zfs" ./autogen.sh
-		try "configuring zfs" ./configure --disable-sysvinit
-		try "making zfs" make -j$(nproc)
-		try "installing zfs" make DESTDIR=/host install
-	) || exit $?
+	cat > /etc/portage/repos.conf/localrepo.conf <<-EOF2
+		[localrepo]
+		location = /usr/local/portage
+	EOF2
+
+	echo "localrepo" > /usr/local/portage/profiles/repo_name
+
+	cat > /usr/local/portage/metadata/layout.conf <<-EOF2
+		masters = portage-stable
+		auto-sync = false
+	EOF2
+
+	cat > /usr/local/portage/sys-fs/spl/spl-${zfs_version}.ebuild <<-'EOF2'
+		EAPI=6
+
+		DESCRIPTION="SPL shim for ZFS on Linux (ZoL)"
+		HOMEPAGE="http://zfsonlinux.org"
+		SRC_URI="https://github.com/zfsonlinux/zfs/releases/download/zfs-${PV}/${PF}.tar.gz"
+
+		LICENSE="CCDL"
+		SLOT="0"
+		KEYWORDS="amd64 x86"
+		#TODO ZoL requires the following ARCH hack to compile modules as of 0.7.1 (may not be needed for future releases)
+		ARCH="x86"
+	EOF2
+
+	cat > /usr/local/portage/sys-fs/zfs/zfs-${zfs_version}.ebuild <<-'EOF2'
+		EAPI=6
+
+		DESCRIPTION="ZFS on Linux (ZoL)"
+		HOMEPAGE="http://zfsonlinux.org"
+		SRC_URI="https://github.com/zfsonlinux/zfs/releases/download/zfs-${PV}/${PF}.tar.gz"
+
+		LICENSE="CCDL"
+		SLOT="0"
+		KEYWORDS="amd64 x86"
+		#TODO ZoL requires the following ARCH hack to compile modules as of 0.7.1 (may not be needed for future releases)
+		ARCH="x86"
+
+		DEPEND="sys-fs/spl"
+		RDEPEND="${DEPEND}"
+
+		source_configure() { econf --disable-sysvinit; }
+	EOF2
 
 	yell "Creating Systemd Unit Files"
-	cat > /host/usr/lib64/systemd/system/zfs-overlay.service <<-EOF2
+	cat > /corezfs/usr/lib64/systemd/system/zfs-overlay.service <<-EOF2
 		[Unit]
 		Description=CoreZFS usr overlay
 		Before=local-fs.target
@@ -120,11 +146,16 @@ read -d '' build_script <<-'EOF'
 		[Install]
 		WantedBy=local-fs.target
 	EOF2
-	cat > /host/usr/lib64/systemd/system-preset/30-corezfs.preset <<-EOF2
+	cat > /corezfs/usr/lib64/systemd/system-preset/30-corezfs.preset <<-EOF2
 		enable zfs-overlay.service
 	EOF2
 
-	[ ${debug} ] && try "Pre Contianer Exit login shell" bash --login
+	try "generating spl manifest" \
+		ebuild /usr/local/portage/sys-fs/spl/spl-${zfs_version}.ebuild manifest
+	try "generating zfs manifest" \
+		ebuild /usr/local/portage/sys-fs/zfs/zfs-${zfs_version}.ebuild manifest
+
+	try "building ZFS on Linux (ZoL) for CoreOS" emerge --root=/corezfs --oneshot zfs
 EOF
 
 case "$1" in
@@ -140,7 +171,7 @@ case "$1" in
 			echo "${build_script}" > "${CZ_OVERLAY_DIR}/opt/corezfs/build-zfs.sh"
 		try "setting build script executable" \
 			chmod +x "${CZ_OVERLAY_DIR}/opt/corezfs/build-zfs.sh"
-		
+
 		DEVENV="coreos_${VERSION}.bin"
 		if [ ! -r "${CZ_BUILD_DIR}/${DEVENV}" ]; then
 			try "refreshing CoreOS signing key" \
@@ -159,29 +190,25 @@ case "$1" in
 				bunzip2 -fv "${CZ_BUILD_DIR}/${DEVENV}.bz2" > "${CZ_BUILD_DIR}/${DEVENV}"
 		fi
 
-		(
-			cd "${CZ_BUILD_DIR}"
-			try "allocating swap file" fallocate -l 1024m swap
-			try "setting swap file permissions" chmod 600 swap
-			try "initializing swap file" mkswap swap
-			try "activating swap" swapon swap
-			trap "{ swapoff ${CZ_BUILD_DIR}/swap && rm ${CZ_BUILD_DIR}/swap; }" EXIT
+		try "allocating swap file" fallocate -l 1024m ${CZ_BUILD_DIR}/swap
+		try "setting swap file permissions" chmod 600 ${CZ_BUILD_DIR}/swap
+		try "initializing swap file" mkswap ${CZ_BUILD_DIR}/swap
+		try "activating swap" swapon ${CZ_BUILD_DIR}/swap
+		trap "{ swapoff ${CZ_BUILD_DIR}/swap && rm ${CZ_BUILD_DIR}/swap; }" EXIT
+		
+		try "launching development container" \
+			systemd-nspawn \
+				--image="${CZ_BUILD_DIR}/${DEVENV}" \
+				--ephemeral \
+				--setenv="debug=${debug}" \
+				--setenv="zfs_version=${zfs_version}" \
+				--setenv="CZ_SPLREPO=${CZ_SPLREPO:=https://api.github.com/repos/zfsonlinux/spl/tarball}" \
+				--setenv="CZ_ZFSREPO=${CZ_ZFSREPO:=https://api.github.com/repos/zfsonlinux/zfs/tarball}" \
+				--overlay="/:${CZ_OVERLAY_DIR}/opt/corezfs:/corezfs" \
+				--overlay="/usr:${CZ_OVERLAY_DIR}/opt/corezfs/usr:/corezfs/usr" \
+				--as-pid2 \
+				/corezfs/build-zfs.sh
 
-			try "launching development container" \
-				systemd-nspawn \
-					--image="${DEVENV}" \
-					--ephemeral \
-					--setenv="debug=${debug}" \
-					--setenv="CZ_SPLREPO=${CZ_SPLREPO:=https://api.github.com/repos/zfsonlinux/spl/tarball}" \
-					--setenv="CZ_ZFSREPO=${CZ_ZFSREPO:=https://api.github.com/repos/zfsonlinux/zfs/tarball}" \
-					--overlay="/::/host" \
-					--overlay="/usr:${CZ_OVERLAY_DIR}/opt/corezfs/usr:/host/usr" \
-					--overlay="/usr/lib64/modules::/usr/lib64/modules" \
-					--as-pid2 \
-					/host/opt/corezfs_build/overlay/opt/corezfs/build-zfs.sh
-		) || exit $?
-
-		[ ${debug} ] && try "pre-archive login shell" bash --login
 		[ "${2}" ] && ARCHIVE=${2}
 		try "creating ${ARCHIVE} tarball" \
 			tar -zcvf "${ARCHIVE}" -C "${CZ_OVERLAY_DIR}" opt/corezfs/usr
@@ -196,6 +223,7 @@ case "$1" in
 			Archive file: ${ARCHIVE}
 			
 			Run "corezfs install ${ARCHIVE}" to install
+
 		EOF
 		;;
 	install)
@@ -216,6 +244,7 @@ case "$1" in
 		cat >&2 <<-EOF
 			
 			Finished Installing ZFS on Linux (ZoL) for CoreOS ($VERSION)
+
 		EOF
 		;;
 	*)
