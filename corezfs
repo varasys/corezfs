@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 
-version="v0.1.1"
+# this script was originally written for ZFS 0.7.1 and CoreOS 1465.7.0
+# this should work with any versions though unless upstream changes break it
 
-zfs_version="0.7.1"
+version="v2.0.0"
 
 yell() { echo "$(basename $0): $*" >&2; }
 die() { yell "FATAL $*"; [ ${debug} ] && bash --login || exit 111; }
 try() { yell ${1}; shift; "$@" || die "ERROR executing: $*"; }
 
+[ ${ZFS_VERSION:=$(curl -s https://api.github.com/repos/zfsonlinux/zfs/releases/latest | jq -r ".tag_name" 2> /dev/null)} ] \
+|| die "failed to query latest zfs version"
+
+ZFS_VERSION=${ZFS_VERSION#zfs-}
+yell "building ZFS on Linux v${ZFS_VERSION}"
 
 . /usr/share/coreos/release
 . /usr/share/coreos/update.conf
@@ -32,17 +38,28 @@ read -d '' help_message <<-EOF
 
 	The build command will build zfs and create the archive file which is an
 	overlay for the "/usr" filesystem. The default archive_file is
-	"./${ARCHIVE}".
+	"./${ARCHIVE}". The archive file should be installed to the target system
+	using the install command. The install command builds an archive file
+	automatically if it doesn't exist, so the build command is only required
+	to build the archive on a system it will not be installed on.
 	
 	The archive file can be used to install the zfs binaries on other systems
 	instead of building it each time.
 
-	The install command extracts the archive file to "/opt/corezfs", installs
-	and enables a "zfs-overlay.service" systemd service which overlays
-	"/opt/corezfs/usr" over the "/usr" directory, runs "systemctl preset-all"
-	to enable the zfs services, runs "ldconfig", and "modprobe zfs".
+	The install command will build the archive file if it doesn't exist and
+	then extracts the archive file including the overlay to /opt/corezfs and
+	some configuration files into /etc, and starts the relevant systemd
+	services (including a zfs-overlay.service to mount the overlay).
+
+	By default, the script will query the ZoL github repository for the latest
+	released version. The ZoL version may be specified manually by setting the
+	ZFS_VERSION environment variable (ie. "ZFS_VERSION=0.7.1 corezfs install").
 
 	This is meant to be built and installed on a clean CoreOS instance.
+
+	This script was originally written and tested on CoreOS 1465.7.0 and
+	ZFS on Linux v0.7.1, but should work on other versions unless upstream
+	changes break the script.
 
 EOF
 
@@ -55,6 +72,7 @@ while getopts ":dhv" flag; do
 	esac
 done
 shift $((OPTIND-1))
+[ ${2} ] && ARCHIVE=${2}
 
 [ ${EUID} -eq 0 ] || die "must be run as root user"
 
@@ -99,7 +117,7 @@ read -d '' build_script <<-'EOF'
 		auto-sync = false
 	EOF2
 
-	cat > /usr/local/portage/sys-fs/spl/spl-${zfs_version}.ebuild <<-'EOF2'
+	cat > /usr/local/portage/sys-fs/spl/spl-${ZFS_VERSION}.ebuild <<-'EOF2'
 		EAPI=6
 
 		DESCRIPTION="SPL shim for ZFS on Linux (ZoL)"
@@ -113,7 +131,7 @@ read -d '' build_script <<-'EOF'
 		ARCH="x86"
 	EOF2
 
-	cat > /usr/local/portage/sys-fs/zfs/zfs-${zfs_version}.ebuild <<-'EOF2'
+	cat > /usr/local/portage/sys-fs/zfs/zfs-${ZFS_VERSION}.ebuild <<-'EOF2'
 		EAPI=6
 
 		DESCRIPTION="ZFS on Linux (ZoL)"
@@ -129,42 +147,58 @@ read -d '' build_script <<-'EOF'
 		DEPEND="sys-fs/spl"
 		RDEPEND="${DEPEND}"
 
-		source_configure() { econf --disable-sysvinit; }
+		source_configure() {
+			econf \
+				--disable-sysvinit \
+				--with-systemdunitdir=/etc/systemd/system \
+				--with-systemdpresetdir=/etc/systemd/system-preset
+		}
 	EOF2
 
 	yell "Creating Systemd Unit Files"
 	cat > /corezfs/usr/lib64/systemd/system/zfs-overlay.service <<-EOF2
 		[Unit]
-		Description=CoreZFS usr overlay
-		Before=local-fs.target
+		Description=CoreZFS /usr overlay
+		DefaultDependencies=no
 		ConditionPathExists=/opt/corezfs/usr
+		Before=zfs-import-cache.service
+		Before=zfs-import-scan.service
+		Before=zfs-mount.service
+		Before=zfs-share.service
+		Before=zfs-zed.service
+		Before=zfs.target
 
 		[Service]
 		Type=oneshot
+		RemainAfterExit=yes
 		ExecStart=/usr/bin/mount -t overlay overlay -o lowerdir=/opt/corezfs/usr:/usr /usr
 		ExecStartPost=/usr/sbin/modprobe zfs
-		ExecStartPost=/usr/sbin/zpool import -a
 
 		[Install]
-		WantedBy=local-fs.target
+		RequiredBy=zfs.target
 	EOF2
+
 	cat > /corezfs/usr/lib64/systemd/system-preset/30-corezfs.preset <<-EOF2
 		enable zfs-overlay.service
 	EOF2
 
 	try "generating spl manifest" \
-		ebuild /usr/local/portage/sys-fs/spl/spl-${zfs_version}.ebuild manifest
+		ebuild /usr/local/portage/sys-fs/spl/spl-${ZFS_VERSION}.ebuild manifest
 	try "generating zfs manifest" \
-		ebuild /usr/local/portage/sys-fs/zfs/zfs-${zfs_version}.ebuild manifest
+		ebuild /usr/local/portage/sys-fs/zfs/zfs-${ZFS_VERSION}.ebuild manifest
 
 	try "building ZFS on Linux (ZoL) for CoreOS" emerge --root=/corezfs --oneshot zfs
 
-	try "running depmod" depmod -b /corezfs
+	try "running depmod" chroot /corezfs depmod
+	try "running ldconfig" chroot /corezfs ldconfig -v
+
+	yell "finished building ZFS on Linux (ZoL) overlay for CoreOS"
 EOF
 
 case "$1" in
 	build)
 		yell "Building ZFS on Linux (ZoL) for CoreOS ($VERSION)"
+		yell "target archive file: ${ARCHIVE}"
 
 		try "creating build directory ${CZ_BUILD_DIR:="/opt/corezfs_build"}" \
 			mkdir -p ${CZ_BUILD_DIR} && CZ_BUILD_DIR=$(cd ${CZ_BUILD_DIR}; pwd)
@@ -195,17 +229,17 @@ case "$1" in
 		fi
 
 		try "allocating swap file" fallocate -l 1024m ${CZ_BUILD_DIR}/swap
+		trap "{ swapoff ${CZ_BUILD_DIR}/swap; rm ${CZ_BUILD_DIR}/swap; }" EXIT
 		try "setting swap file permissions" chmod 600 ${CZ_BUILD_DIR}/swap
 		try "initializing swap file" mkswap ${CZ_BUILD_DIR}/swap
 		try "activating swap" swapon ${CZ_BUILD_DIR}/swap
-		trap "{ swapoff ${CZ_BUILD_DIR}/swap && rm ${CZ_BUILD_DIR}/swap; }" EXIT
 		
 		try "launching development container" \
 			systemd-nspawn \
 				--image="${CZ_BUILD_DIR}/${DEVENV}" \
 				--ephemeral \
 				--setenv="debug=${debug}" \
-				--setenv="zfs_version=${zfs_version}" \
+				--setenv="ZFS_VERSION=${ZFS_VERSION}" \
 				--setenv="CZ_SPLREPO=${CZ_SPLREPO:=https://api.github.com/repos/zfsonlinux/spl/tarball}" \
 				--setenv="CZ_ZFSREPO=${CZ_ZFSREPO:=https://api.github.com/repos/zfsonlinux/zfs/tarball}" \
 				--overlay="/:${CZ_OVERLAY_DIR}/opt/corezfs:/corezfs" \
@@ -213,12 +247,14 @@ case "$1" in
 				--as-pid2 \
 				/corezfs/build-zfs.sh
 
-		[ "${2}" ] && ARCHIVE=${2}
+		try "transferring systemd unit files to /etc/systemd" \
+			cp --update --recursive ${CZ_OVERLAY_DIR}/opt/corezfs/usr/lib64/systemd ${CZ_OVERLAY_DIR}/opt/corezfs/etc/
+
 		try "creating ${ARCHIVE} tarball" \
-			tar -zcvf "${ARCHIVE}" -C "${CZ_OVERLAY_DIR}" opt/corezfs/usr
+			tar -zcvf "${ARCHIVE}" -C "${CZ_OVERLAY_DIR}" opt/corezfs/usr -C "${CZ_OVERLAY_DIR}/opt/corezfs" etc
 
 		[ ${debug} ] || try "cleaning up temporary build directories" \
-			rm -rf "${CZ_BUILD_DIR}" "${CZ_OVERLAY_DIR}"
+			rm -rf "${CZ_OVERLAY_DIR}" "${CZ_BUILD_DIR}"
 
 		cat >&2 <<-EOF
 			
@@ -233,23 +269,16 @@ case "$1" in
 	install)
 		yell "Installing ZFS on Linux (ZoL) for CoreOS ($VERSION)"
 
-		[ ${2} ] && ARCHIVE=${2}
+		[ -r ${ARCHIVE} ] || try "no archive file available; building one ..." ${0} ${debug:+"-d"} build ${ARCHIVE}
+
 		try "extracting ${ARCHIVE}" \
 			tar -zxvf ${ARCHIVE} -C /
-		try "copying zfs-overlay.service to /etc/systemd/system" \
-			cp /opt/corezfs/usr/lib64/systemd/system/zfs-overlay.service /etc/systemd/system/
 		try "enabling zfs-overlay.service" \
 			systemctl enable --now zfs-overlay.service
-		try "running ldconfig" \
-			ldconfig -v
 		try "presetting systemd units" \
 			systemctl preset-all --now
 
-		cat >&2 <<-EOF
-			
-			Finished Installing ZFS on Linux (ZoL) for CoreOS ($VERSION)
-
-		EOF
+		yell "Finished Installing ZFS on Linux (ZoL) for CoreOS ($VERSION)"
 		;;
 	*)
 		die "unknown sub-command \"${1}\" (run \"$(basename ${0}) -h\" for help)"
