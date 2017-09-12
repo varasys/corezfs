@@ -141,7 +141,9 @@ read -d '' build_script <<-'EOF'
 
 		[Service]
 		Type=oneshot
-		ExecStart=/usr/bin/mount -t overlay overlay -o lowerdir=/usr:/opt/corezfs/usr /usr
+		ExecStart=/usr/bin/mount -t overlay overlay -o lowerdir=/opt/corezfs/usr:/usr /usr
+		ExecStartPost=/usr/sbin/modprobe zfs
+		ExecStartPost=/usr/sbin/zpool import -a
 
 		[Install]
 		WantedBy=local-fs.target
@@ -156,6 +158,8 @@ read -d '' build_script <<-'EOF'
 		ebuild /usr/local/portage/sys-fs/zfs/zfs-${zfs_version}.ebuild manifest
 
 	try "building ZFS on Linux (ZoL) for CoreOS" emerge --root=/corezfs --oneshot zfs
+
+	try "running depmod" depmod -b /corezfs
 EOF
 
 case "$1" in
