@@ -94,7 +94,7 @@ read -d '' build_script <<-'EOF'
 		git -C /var/lib/portage/coreos-overlay checkout build-${COREOS_RELEASE_VERSION%%.*}
 
 	try "emerging coreos-sources" \
-		emerge -gKv coreos-sources
+		emerge -v coreos-sources
 	
 	try "copying /proc/config.gz to /usr/src/linux/.config" \
 		gzip -cd /proc/config.gz > /usr/src/linux/.config
