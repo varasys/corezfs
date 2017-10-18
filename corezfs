@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
 
-# this script was originally written for ZFS 0.7.1 and CoreOS 1465.7.0
-# this should work with any versions though unless upstream changes break it
+version="v2.0.1"
 
-version="v2.0.0"
-
+export PS1="host-debug# "
 yell() { echo "$(basename $0): $*" >&2; }
-die() { yell "FATAL $*"; [ ${debug} ] && bash --login || exit 111; }
+die() { yell "FATAL $*"; [ ${debug} ] && sh || exit 111; }
 try() { yell ${1}; shift; "$@" || die "ERROR executing: $*"; }
 
 [ ${ZFS_VERSION:=$(curl -s https://api.github.com/repos/zfsonlinux/zfs/releases/latest | jq -r ".tag_name" 2> /dev/null)} ] \
@@ -58,8 +56,9 @@ read -d '' help_message <<-EOF
 	This is meant to be built and installed on a clean CoreOS instance.
 
 	This script was originally written and tested on CoreOS 1465.7.0 and
-	ZFS on Linux v0.7.1, but should work on other versions unless upstream
-	changes break the script.
+	ZoL v0.7.1, but should work on other versions unless upstream
+	changes break the script. It has been updated for CoreOS 1520.6.0 and
+	ZoL v0.7.2.
 
 EOF
 
@@ -76,12 +75,12 @@ shift $((OPTIND-1))
 
 [ ${EUID} -eq 0 ] || die "must be run as root user"
 
-
 read -d '' build_script <<-'EOF'
 	#!/usr/bin/env bash
 
+	export PS1="container-debug# "
 	yell() { echo "$(basename $0): $*" >&2; }
-	die() { yell "FATAL $*"; [ ${debug} ] && bash --login || exit 111; }
+	die() { yell "FATAL $*"; [ ${debug} ] && sh || exit 111; }
 	try() { mesg=${1}; yell ${mesg}; shift; "$@" || die "ERROR executing: $*"; }
 
 	try "sourcing /usr/share/coreos/release" \
@@ -161,12 +160,8 @@ read -d '' build_script <<-'EOF'
 		Description=CoreZFS /usr overlay
 		DefaultDependencies=no
 		ConditionPathExists=/opt/corezfs/usr
-		Before=zfs-import-cache.service
-		Before=zfs-import-scan.service
-		Before=zfs-mount.service
-		Before=zfs-share.service
-		Before=zfs-zed.service
-		Before=zfs.target
+		Requires=zfs.target
+		After=zfs.target
 
 		[Service]
 		Type=oneshot
@@ -175,7 +170,7 @@ read -d '' build_script <<-'EOF'
 		ExecStartPost=/usr/sbin/modprobe zfs
 
 		[Install]
-		RequiredBy=zfs.target
+		RequiredBy=local-fs.target
 	EOF2
 
 	cat > /corezfs/usr/lib64/systemd/system-preset/30-corezfs.preset <<-EOF2
@@ -213,17 +208,16 @@ case "$1" in
 		DEVENV="coreos_${VERSION}.bin"
 		if [ ! -r "${CZ_BUILD_DIR}/${DEVENV}" ]; then
 			try "refreshing CoreOS signing key" \
-				gpg2 --keyserver pgp.mit.edu --recv-keys 50E0885593D2DCB4
-
+				gpg2 --keyserver hkps.pool.sks-keyservers.net --recv-keys 50E0885593D2DCB4
+				
+			DEVREPO="https://${GROUP}.release.core-os.net/${COREOS_RELEASE_BOARD}/${COREOS_RELEASE_VERSION}/coreos_developer_container.bin.bz2"
 			if [ ! -r "${CZ_BUILD_DIR}/${DEVENV}.bz2" ]; then
-				DEVREPO="https://${GROUP}.release.core-os.net/${COREOS_RELEASE_BOARD}/${COREOS_RELEASE_VERSION}/coreos_developer_container.bin.bz2"
 				try "downloading CoreOS development container" \
 					curl -L "${DEVREPO}" > "${CZ_BUILD_DIR}/${DEVENV}.bz2"
 			fi
 
 			try "verifying development container signature" \
 				gpg2 --verify <(try "downloading signature" curl -L "${DEVREPO}.sig") "${CZ_BUILD_DIR}/${DEVENV}.bz2"
-
 			try "decompressing development container (this may take awhile)" \
 				bunzip2 -fv "${CZ_BUILD_DIR}/${DEVENV}.bz2" > "${CZ_BUILD_DIR}/${DEVENV}"
 		fi
@@ -242,6 +236,7 @@ case "$1" in
 				--setenv="ZFS_VERSION=${ZFS_VERSION}" \
 				--setenv="CZ_SPLREPO=${CZ_SPLREPO:=https://api.github.com/repos/zfsonlinux/spl/tarball}" \
 				--setenv="CZ_ZFSREPO=${CZ_ZFSREPO:=https://api.github.com/repos/zfsonlinux/zfs/tarball}" \
+				--overlay="+/var/lib/portage::/var/lib/portage" \
 				--overlay="/:${CZ_OVERLAY_DIR}/opt/corezfs:/corezfs" \
 				--overlay="/usr:${CZ_OVERLAY_DIR}/opt/corezfs/usr:/corezfs/usr" \
 				--as-pid2 \
