@@ -212,7 +212,7 @@ case "$1" in
 		DEVENV="coreos_${VERSION}.bin"
 		if [ ! -r "${CZ_BUILD_DIR}/${DEVENV}" ]; then
 			try "refreshing CoreOS signing key" \
-				gpg2 --keyserver hkps.pool.sks-keyservers.net --recv-keys 50E0885593D2DCB4
+				curl -s "https://coreos.com/security/image-signing-key/CoreOS_Image_Signing_Key.asc" -o - | gpg2 --import
 				
 			DEVREPO="https://${GROUP}.release.core-os.net/${COREOS_RELEASE_BOARD}/${COREOS_RELEASE_VERSION}/coreos_developer_container.bin.bz2"
 			if [ ! -r "${CZ_BUILD_DIR}/${DEVENV}.bz2" ]; then
