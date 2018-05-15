@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-version="v2.0.3"
+version="v2.0.4"
 
 export PS1="host-debug# "
 yell() { echo "$(basename $0): $*" >&2; }
@@ -240,7 +240,7 @@ case "$1" in
 				--setenv="ZFS_VERSION=${ZFS_VERSION}" \
 				--setenv="CZ_SPLREPO=${CZ_SPLREPO:=https://api.github.com/repos/zfsonlinux/spl/tarball}" \
 				--setenv="CZ_ZFSREPO=${CZ_ZFSREPO:=https://api.github.com/repos/zfsonlinux/zfs/tarball}" \
-				--overlay="+/usr/local::/usr/local" \
+				--overlay="+/usr/src::/usr/src" \
 				--overlay="+/var/lib/portage::/var/lib/portage" \
 				--overlay="/:${CZ_OVERLAY_DIR}/opt/corezfs:/corezfs" \
 				--overlay="/usr:${CZ_OVERLAY_DIR}/opt/corezfs/usr:/corezfs/usr" \
