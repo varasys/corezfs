@@ -240,7 +240,7 @@ case "$1" in
 				--setenv="ZFS_VERSION=${ZFS_VERSION}" \
 				--setenv="CZ_SPLREPO=${CZ_SPLREPO:=https://api.github.com/repos/zfsonlinux/spl/tarball}" \
 				--setenv="CZ_ZFSREPO=${CZ_ZFSREPO:=https://api.github.com/repos/zfsonlinux/zfs/tarball}" \
-				--bind="${CZ_BUILD_DIR}/tmp::/var/tmp/portage" \
+				--bind="${CZ_BUILD_DIR}/tmp:/var/tmp/portage" \
 				--overlay="+/var/lib/portage::/var/lib/portage" \
 				--overlay="/:${CZ_OVERLAY_DIR}/opt/corezfs:/corezfs" \
 				--overlay="/usr:${CZ_OVERLAY_DIR}/opt/corezfs/usr:/corezfs/usr" \
